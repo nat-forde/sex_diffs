@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ## get libraries/set paths
-```{r}
+```{r get libraries & set paths}
 library(tidyverse)
 library(broom)
 library(knitr)
@@ -39,7 +39,7 @@ outdir <- "/projects/nforde/HCP/stats/combined_figures"
 
 ```
 ## define functions
-```{r}
+```{r define functions}
 
 cos.dist <- function(x){
   y <- cent(x, 200)
@@ -166,7 +166,7 @@ geom_split_violin <- function (mapping = NULL, data = NULL, stat = "ydensity", p
 ```
 
 # make unit vector
-```{r}
+```{r make unit vectors}
 #some list of variable names to keep things easier later
 HCP.SC <- c("L_ThalamusProperFull.resid", "L_CaudateFull.resid", "L_PutamenFull.resid", "L_PallidumFull.resid",
             "L_HippoFull.resid", "L_AmygdalaFull.resid", "L_AccumbensAreaFull.resid", "R_ThalamusProperFull.resid",
@@ -226,7 +226,7 @@ OASIS.unit.CT <- apply(dplyr::select(OASIS.norm, starts_with("CT")), 1, unit1) %
 
 ```
 # Mises-Fisher   
-```{r}
+```{r von Mises-Fisher distributions}
 ##########################################
 ##      Don't use! It's unstable        ##
 ##########################################
@@ -412,7 +412,7 @@ OASIS.unit.CT <- apply(dplyr::select(OASIS.norm, starts_with("CT")), 1, unit1) %
 # ggsave(Mkappa.plt.file, Mkappa.plt, dpi=300, width = 21, height = 20, units = "cm") #####
 ```
 ## graphing / testing
-```{r}
+```{r testing}
 
 # # plot the best vector
 # 
@@ -465,7 +465,7 @@ OASIS.unit.CT <- apply(dplyr::select(OASIS.norm, starts_with("CT")), 1, unit1) %
 
 ```
 #functions for calculating multi-dimensional centroids properly
-```{r}
+```{r define functions for multi-dimensional centroids}
 # https://stats.stackexchange.com/questions/220480/centroid-of-nearest-neighbours-on-a-hypersphere-as-a-method-for-applying-crossov
 # A quick and dirty approach is to simply take the standard weighted average, then renormalize the resulting vector so that it lies on the surface of the sphere. This is an approximate solution that might work in certain cases. There is precedent in the literature.
 # 
@@ -714,7 +714,7 @@ cent <- function(x, max.iter) {
   
 ```
 #calculate cosine similarity (angle between sub and mu)
-```{r}
+```{r calculate cosine angle between subjects and their group centroid}
 #divide by sex
 HCP.M <- subset(HCP.norm, Sex =="Male")
 HCP.F <- subset(HCP.norm, Sex =="Female")
@@ -863,7 +863,7 @@ print(stats.cos)
 
 
 #Plotting Cosine distance
-```{r}
+```{r plot Cosine distance}
 
 HCP.plt.gl <- ggplot(HCP.cos, aes(x="Sex", fill= Sex, y=Global.cos)) + geom_split_violin() +
               theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),

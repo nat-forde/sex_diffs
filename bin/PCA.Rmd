@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ## get libraries/set paths
-```{r}
+```{r get libraries & set paths}
 library(tidyverse)
 library(broom)
 library(knitr)
@@ -61,7 +61,7 @@ OASIS.glo <- c("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebell
 
 
 #PCA
-```{r}
+```{r PCAs}
 #prep for graphs
 area <- c("banks superior temporal", "caudal anterior cingulate",  "caudal middle frontal", "cuneus", "entorhinal", "fusiform",
                    "inferior parietal", "inferior temporal","isthmus cingulate", "lateral occipital", "lateral orbitofrontal", "lingual",

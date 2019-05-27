@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ## get libraries/set paths
-```{r}
+```{r get libraries & set paths}
 library(tidyverse)
 library(broom)
 library(knitr)
@@ -39,7 +39,7 @@ outdir <- "/projects/nforde/HCP/stats/combined_figures"
 
 ```
 ## define functions
-```{r}
+```{r define functions}
 
 unit1 <- function(x) {x / sqrt(sum(x^2))} #where x is the vector to normalise
 
@@ -251,11 +251,9 @@ cent <- function(x, max.iter) {
   return(q)
 }
 
-
-
 ```
 # Mahalanobis
-```{r}
+```{r Mahalanobis Distance}
 #some list of variable names to keep things easier later
 HCP.SC <- c("L_ThalamusProperageIn.resid", "L_CaudateageIn.resid", "L_PutamenageIn.resid", "L_PallidumageIn.resid",
             "L_HippoageIn.resid", "L_AmygdalaageIn.resid", "L_AccumbensAreaageIn.resid", "R_ThalamusProperageIn.resid",
@@ -403,7 +401,7 @@ print(stats.mah)
 
 ```
 #Plotting Mahalanobis distance
-```{r}
+```{r Mahalanobis Distances plotted by age}
 
 HCP.plt.gl <- ggplot(HCP.mah, aes(x=Age, colour= Sex, y=mah.glo)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
               theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
@@ -467,7 +465,7 @@ ggsave(mah.plt.file, mah.plt, dpi=300, width = 21, height = 20, units = "cm") ##
 
 ```
 #cosine
-```{r}
+```{r Cosine Angle}
 # centroid changes with age. Need to bin by age and calculate cosine angle to centroid within age bin
 
 #match samples and run whole samples
@@ -1140,7 +1138,7 @@ ggplot(Global.cos, aes(x=Age, colour= V2, y=as.numeric(V1))) + geom_boxplot(widt
 ```
 
 #Plotting Cosine angle
-```{r}
+```{r Cosine Angle plots by age}
 
 HCP.plt.gl <- ggplot(HCP.cos, aes(x=Age, colour= Sex, y=Global.cos)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
               theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
@@ -1206,7 +1204,7 @@ ggsave(cos.plt.file, cos.plt, dpi=300, width = 21, height = 20, units = "cm") ##
 
 
 # playing/investigating mu 
-```{r}
+```{r what the mu?}
 #PNC
 PNC.glo.M.mu <- filter(PNC.unit.global, Sex=="M") %>%
   dplyr::select(PNC.glo) %>% cent(200)

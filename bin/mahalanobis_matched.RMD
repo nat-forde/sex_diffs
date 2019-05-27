@@ -6,7 +6,7 @@ output: html_document
 ---
 Same as the regular mahalanobis script but pulls the matched data outputs 
 ## get libraries/set paths
-```{r}
+```{r get libraries & set paths}
 library(tidyverse)
 library(broom)
 library(knitr)
@@ -32,7 +32,7 @@ outdir <- "/projects/nforde/HCP/stats/combined_figures/matched"
 
 ```
 ## define functions
-```{r}
+```{r define functions}
 
 unit1 <- function(x) {x / sqrt(sum(x^2))} #where x is the vector to normalise
 
@@ -106,7 +106,7 @@ geom_split_violin <- function (mapping = NULL, data = NULL, stat = "ydensity", p
 ```
 # Euclidean distance
 
-```{r}
+```{r Euclidean Distance}
 #some list of variable names to keep things easier later
 HCP.SC <- c("L_ThalamusProperFull.resid", "L_CaudateFull.resid", "L_PutamenFull.resid", "L_PallidumFull.resid",
             "L_HippoFull.resid", "L_AmygdalaFull.resid", "L_AccumbensAreaFull.resid", "R_ThalamusProperFull.resid",
@@ -233,7 +233,7 @@ print(stats)
 ```
 
 # Mahalanobis
-```{r}
+```{r Mahalanobis Distance}
 #calculate covariance matrices on full sample
 HCP.tot.cov <- cov(HCP.norm[c(1:(length(HCP.norm)-3))])
 HCP.glo.cov <- cov(HCP.norm[HCP.glo])
@@ -347,7 +347,7 @@ print(stats.mah)
 
 ```
 #Plotting Mahalanobis distance
-```{r}
+```{r Mahalanobis distance plots}
 
 HCP.plt.gl <- ggplot(HCP.mah, aes(x="Sex", fill= Sex, y=mah.glo)) + geom_split_violin() +
               theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
@@ -447,7 +447,7 @@ ggsave(mah.plt.file, mah.plt, dpi=300, width = 21, height = 20, units = "cm") ##
 
 ```
 #PCA
-```{r}
+```{r PCAs}
 #prep for graphs
 area <- c("banks superior temporal", "caudal anterior cingulate",  "caudal middle frontal", "cuneus", "entorhinal", "fusiform",
                    "inferior parietal", "inferior temporal","isthmus cingulate", "lateral occipital", "lateral orbitofrontal", "lingual",

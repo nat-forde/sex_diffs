@@ -6,7 +6,7 @@ output: html_document
 ---
 
 # get libraries/set paths
-```{r}
+```{r get libraries & set paths}
 library(tidyverse)
 library(broom)
 library(knitr)
@@ -47,7 +47,7 @@ outdir <- "/projects/nforde/HCP/stats/PNC/matched"
 ```
 # define functions
 
-```{r}
+```{r define functions}
 
 ## function to extract stats from lm
 extract <- function(X,num){ 
@@ -187,7 +187,7 @@ geom_split_violin <- function (mapping = NULL, data = NULL, stat = "ydensity", p
 
 ```
 # organise
-```{r}
+```{r organise data}
 demogs <- merge(pheno, QC, by.x = "SUBJID", by.y = "Maget")
 demogs <- subset(demogs, is.na(exclude))
 
@@ -271,7 +271,7 @@ CortLR <- names(CT.df)[c(2:35,37:70)]
 Cort <- names(CT.hemi)[2:35]
 ```
 # Stats Overall
-```{r}
+```{r mean stats global}
 ### Total Brain Volume (BrainSegNotVent) analysis
 TBVageres <- gam(BrainSegNotVent ~ s(age_at_cnb), data=Vol.df)
 TBVageres1 <- augment(TBVageres)
@@ -342,7 +342,7 @@ write.csv(OV_out, file=OVout.file, row.names = T)
 
 ```
 # Overall variance testing
-```{r}
+```{r VR stats global}
 # raw model
 Vol.M <- subset(Vol.resZ, Sex == "M")
 Vol.F <- subset(Vol.resZ, Sex == "F")
@@ -384,7 +384,7 @@ write.csv(OV_VR, file=OVoutVR.file, row.names = T)
 
 ```
 # Overall Plots raw (for age plots) and minus age (box and vio)
-```{r}
+```{r plots global}
 OVplots_age <- plot_age(overallincTBV, Vol.df)
 
 OV_to_graph_age <- c(".residZ", "TotalGrayage.resid", "CorticalWhiteMatterage.resid", "Cerebellum_Cortage.resid", "Cerebellum_WMage.resid") ########
@@ -404,7 +404,7 @@ ggsave(OVfile.vio, OV3, dpi=300, width = 21, height = 14, units = "cm") ########
 
 ```
 # Overall Plots - minus TBV (age plots), minus age and TBV (vio)
-```{r}
+```{r plots global without TBV}
 
 OV_to_graph_full <- c(".residZ", OVres_full_ls) 
 
@@ -436,7 +436,7 @@ ggsave(OVfile.alt1, AltOV1, dpi=300, width = 21, height = 8, units = "cm")
 
 ```
 # sub cortical stats mean 
-```{r}
+```{r mean stats subcortical}
 ## Stats sub cort
 
 ### make df including residuals from TBV 
@@ -491,7 +491,7 @@ write.csv(SC_out, file=SCout.file, row.names = T)
 
 ```
 # Subcortical variance testing
-```{r}
+```{r VR stats subcortical}
 # raw model
 SC.M.res <- subset(SC.resZ, Sex == "M") ##SC.res made above includes residuals 
 SC.F.res <- subset(SC.resZ, Sex == "F")
@@ -519,7 +519,7 @@ write.csv(SC_VR, file=SCoutVR.file, row.names = T)
 ```
 
 # Subcortical Plots - raw (for age plots) and minus age (box and vio)
-```{r}
+```{r plots subcortical}
 # make df with hemi and residual data
 SC.R.res <- SC.resZ %>% dplyr::select(starts_with("Right.")) %>% cbind(SC.resZ[c("ID")])
 colnames(SC.R.res) <- sub("Right.", "", colnames(SC.R.res)) 
@@ -558,7 +558,7 @@ ggsave(SCfile.vio, SC3, dpi=300, width = 21, height = 17.82, units = "cm")
 
 ```
 # Subcortical Plots - minus TBV (age plots), minus age and TBV (vio)
-```{r}
+```{r plots subcortical without TBV}
 #plot 
 SCplots_vio.res <- plot_vio_hemi(SC_to_graph_full, SC.hemi.res)
 
@@ -602,7 +602,7 @@ ggsave(SCfile.alt3, AltSC3, dpi=300, width = 29.7, height = 8, units = "cm")
 
 ```
 # subcortical atlas plot
-```{r}
+```{r Atlas plot SC}
 areaSC <- c("thalamus proper", "caudate", "putamen", "pallidum", "hippocampus", "amygdala", "accumbens")
 leftSC <- cbind(areaSC, "left")
 rightSC <- cbind(areaSC, "right")
@@ -665,7 +665,7 @@ ggsave(SC_plot.file, SC_plot, dpi=300, width = 21, height = 12, units = "cm")
 ```
 
 # stats cortical CT means
-```{r}
+```{r mean stats CT}
 ### make df including residuals from TBV 
 CT.res <- CT.df
 CTres_age  <- lapply(CortLR, function(i){
@@ -719,7 +719,7 @@ write.csv(CT_out_tbl, file=CTout.file, row.names = T)
 
 ```
 #  stats cortical CT variance
-```{r}
+```{r VR stats CT}
 
 CT.M.res <- subset(CT.resZ, Sex == "M") # 
 CT.F.res <- subset(CT.resZ, Sex == "F")
@@ -746,7 +746,7 @@ write.csv(CT_VR, file=CToutVR.file, row.names = T)
 
 ```
 # plot CT - raw (for age plots) and minus age (box and vio)
-```{r}
+```{r plots CT}
 #mk df with hemis and resid data
 CT.R.res <- CT.resZ %>% dplyr::select(starts_with("rh_")) %>% cbind(CT.res[c("ID")])
 colnames(CT.R.res) <- sub("rh_", "", colnames(CT.R.res)) 
@@ -785,7 +785,7 @@ ggsave(CTfile.vio, CT3, dpi=300, width = 21, height = 29.7, units = "cm")
 
 ```
 # CT Plots - minus TBV (age plots), minus age and TBV (vio)
-```{r}
+```{r plots CT without TBV}
 #plot
 CTplots_vio.res <- plot_vio_hemi(CT_to_graph_full, CT.hemi.res)
 
@@ -803,7 +803,7 @@ ggsave(CTfile.vio.res, CT3.res, dpi=300, width = 21, height = 29.7, units = "cm"
 
 ```
 # CT atlas plot 
-```{r}
+```{r Atlas plots CT}
 #mk df 
 area <- c("banks superior temporal", "caudal anterior cingulate",  "caudal middle frontal", "cuneus", "entorhinal", "fusiform",
                    "inferior parietal", "inferior temporal","isthmus cingulate", "lateral occipital", "lateral orbitofrontal", "lingual",
@@ -868,7 +868,7 @@ ggsave(CT_plot.file, CT_plot, dpi=300, width = 21, height = 12, units = "cm")
 
 ```
 # stats cortical SA mean
-```{r} 
+```{r mean stats SA} 
 
 ### make df including residuals from TBV 
 SA.res <- SA.df
@@ -923,7 +923,7 @@ write.csv(SA_out_tbl, file=SAout.file, row.names = T)
 
 ```
 # SA variance testing
-```{r}
+```{r VR stats SA}
 
 SA.M.res <- subset(SA.resZ, Sex == "M") # 
 SA.F.res <- subset(SA.resZ, Sex == "F")
@@ -950,7 +950,7 @@ write.csv(SA_VR, file=SAoutVR.file, row.names = T)
 
 ```
 # plot SA - raw (for age plots) and minus age (box and vio)
-```{r}
+```{r plots SA}
 #mk df with hemis and resids
 SA.R.res <- SA.resZ %>% dplyr::select(starts_with("rh_")) %>% cbind(SA.resZ[c("ID")])
 colnames(SA.R.res) <- sub("rh_", "", colnames(SA.R.res)) 
@@ -989,7 +989,7 @@ ggsave(SAfile.vio, SA3, dpi=300, width = 21, height = 29.7, units = "cm")
 
 ```
 # SA Plots - minus TBV (age plots), minus age and TBV (vio)
-```{r}
+```{r plots SA without TBV}
 #plot
 SAplots_vio.res <- plot_vio_hemi(SA_to_graph_full, SA.hemi.res)
 
@@ -1007,7 +1007,7 @@ ggsave(SAfile.vio.res, SA3.res, dpi=300, width = 21, height = 29.7, units = "cm"
 
 ```
 # SA atlas plot 
-```{r}
+```{r Atlas plots SA}
 area <- c("banks superior temporal", "caudal anterior cingulate",  "caudal middle frontal", "cuneus", "entorhinal", "fusiform",
                    "inferior parietal", "inferior temporal","isthmus cingulate", "lateral occipital", "lateral orbitofrontal", "lingual",
                    "medial orbito frontal", "middle temporal", "parahippocampal", "para central", "pars opercularis", "pars orbitalis",
@@ -1072,7 +1072,7 @@ ggsave(SA_plot.file, SA_plot, dpi=300, width = 21, height = 12, units = "cm")
 
 ```
 # unit sphere stuff
-```{r}
+```{r write out residual files}
 colnames(CT.resZ) <- paste0("CT_", colnames(CT.resZ))
 colnames(SA.resZ) <- paste0("SA_", colnames(SA.resZ))
 
@@ -1085,7 +1085,7 @@ write.csv(All.res, file=Allres.file, row.names = T)
 
 ```
 # prepare graphs to combine with HCP graphs 
-```{r}
+```{r prep figures for combining}
 ##SC
 PNC_SCraw <- ggseg(SCplot_sig.raw, atlas="aseg", mapping=aes(fill=as.numeric(AgeResid_Cohen)), colour="black", size=0.4) +
   scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=1)) + 

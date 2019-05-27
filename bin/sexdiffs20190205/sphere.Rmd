@@ -1,0 +1,1268 @@
+---
+title: "Unit Sphere"
+author: "nforde"
+date: "November 15, 2018"
+output: html_document
+---
+
+## get libraries/set paths
+```{r}
+library(tidyverse)
+library(broom)
+library(knitr)
+library(car)
+library(cowplot)
+library(lme4)
+library(ggseg)
+library(gridExtra)
+library(reshape2)
+library(rgl)
+library(movMF)
+
+## set all the paths
+#HCP
+HCP.res <- read.csv("/projects/nforde/HCP/stats/HCP/Allres.csv")
+PNC.res <- read.csv("/projects/nforde/HCP/stats/PNC/Allres.csv")
+ADNI.res <- read.csv("/projects/nforde/HCP/stats/ADNI/Allres.csv")
+OASIS.res <- read.csv("/projects/nforde/HCP/stats/OASIS/Allres.csv")
+
+outdir <- "/projects/nforde/HCP/stats/combined_figures"
+
+```
+## define functions
+```{r}
+
+unit1 <- function(x) {x / sqrt(sum(x^2))} #where x is the vector to normalise
+
+euc.dist <- function(x, y) sqrt(sum((x - y) ^ 2))
+
+cos.dist <- function(x, y){
+  sim <- x %*% y / (sqrt(sum(x ^ 2)) + sqrt(sum(y ^ 2)))
+  
+  deg <- round(acos(sim) * 180/pi,0)
+  return(sim) ##############################################################################
+}
+
+get_colors <- function(groups, group.col = palette()){
+  groups <- as.factor(groups)
+  ngrps <- length(levels(groups))
+  if(ngrps > length(group.col)) 
+    group.col <- rep(group.col, ngrps)
+  color <- group.col[as.numeric(groups)]
+  names(color) <- as.vector(groups)
+  return(color)
+}
+
+extractT <- function(i, num){
+  Tval <- lapply((i), function(f) f$statistic)
+  Pval <- lapply((i), function(f) f$p.value)
+  dof <- lapply((i), function(f) f$parameter)
+   
+  Padj <- p.adjust(Pval, method="fdr", n=num)
+  Cohen <- (as.numeric(Tval)*2)/sqrt(as.numeric(dof))
+  
+  merged <- as.data.frame(cbind(Tval, Padj, Cohen))
+  return(merged)
+
+}
+
+GeomSplitViolin <- ggproto("GeomSplitViolin", GeomViolin, draw_group = function(self, data, ..., draw_quantiles = NULL){
+  data <- transform(data, xminv = x - violinwidth * (x - xmin), xmaxv = x + violinwidth * (xmax - x))
+  grp <- data[1,'group']
+  newdata <- plyr::arrange(transform(data, x = if(grp%%2==1) xminv else xmaxv), if(grp%%2==1) y else -y)
+  newdata <- rbind(newdata[1, ], newdata, newdata[nrow(newdata), ], newdata[1, ])
+  newdata[c(1,nrow(newdata)-1,nrow(newdata)), 'x'] <- round(newdata[1, 'x']) 
+  if (length(draw_quantiles) > 0 & !scales::zero_range(range(data$y))) {
+    stopifnot(all(draw_quantiles >= 0), all(draw_quantiles <= 
+                                              1))
+    quantiles <- ggplot2:::create_quantile_segment_frame(data, draw_quantiles)
+    aesthetics <- data[rep(1, nrow(quantiles)), setdiff(names(data), c("x", "y")), drop = FALSE]
+    aesthetics$alpha <- rep(1, nrow(quantiles))
+    both <- cbind(quantiles, aesthetics)
+    quantile_grob <- GeomPath$draw_panel(both, ...)
+    ggplot2:::ggname("geom_split_violin", grid::grobTree(GeomPolygon$draw_panel(newdata, ...), quantile_grob))
+  }
+  else {
+    ggplot2:::ggname("geom_split_violin", GeomPolygon$draw_panel(newdata, ...))
+  }
+})
+
+geom_split_violin <- function (mapping = NULL, data = NULL, stat = "ydensity", position = "identity", ..., draw_quantiles = NULL, trim = TRUE, scale = "area", na.rm = FALSE, show.legend = NA, inherit.aes = TRUE) {
+  layer(data = data, mapping = mapping, stat = stat, geom = GeomSplitViolin, position = position, show.legend = show.legend, inherit.aes = inherit.aes, params = list(trim = trim, scale = scale, draw_quantiles = draw_quantiles, na.rm = na.rm, ...))
+}
+
+############# FIX UP THIS FUNCTION ##########
+get_euc_dist <- function(M.df, F.df) {
+  M.cent <- apply(M.df[c(1:(length(M.df)-3))], 2, mean) 
+  F.cent <- apply(F.df[c(1:(length(M.df)-3))], 2, mean) 
+  
+  M.df$euc <- apply(M.df[c(1:(length(M.df)-3))], 1, euc.dist, y=M.cent) 
+  F.df$euc <- apply(F.df[c(1:(length(M.df)-3))], 1, euc.dist, y=F.cent) 
+
+  euc <- rbind(HCP.M, HCP.F)
+  return(euc)
+}
+
+```
+# Euclidean distance
+
+```{r}
+
+#first normalise each variable 
+
+HCP.norm <- apply(HCP.res[c(2:(length(HCP.res)-3))], 2, scale, center=TRUE, scale=TRUE) %>% 
+  cbind(HCP.res[c("Sex", "Age_in_Yrs", "Subject")])
+
+PNC.norm <- apply(PNC.res[c(2:(length(PNC.res)-3))], 2, scale, center=TRUE, scale=TRUE) %>% 
+  cbind(PNC.res[c("Sex", "age_at_cnb", "ID")])
+
+ADNI.norm <- apply(ADNI.res[c(2:(length(ADNI.res)-3))], 2, scale, center=TRUE, scale=TRUE) %>% 
+  cbind(ADNI.res[c("Sex", "Age", "RID")])
+
+OASIS.norm <-apply(OASIS.res[c(2:(length(OASIS.res)-3))], 2, scale, center=TRUE, scale=TRUE) %>%
+  cbind(OASIS.res[c("Sex", "Age", "Subject")])
+
+#divide by sex
+HCP.M <- subset(HCP.norm, Sex =="Male")
+HCP.F <- subset(HCP.norm, Sex =="Female")
+
+PNC.M <- subset(PNC.norm, Sex=="M")
+PNC.F <- subset(PNC.norm, Sex=="F")
+
+ADNI.M <- subset(ADNI.norm, Sex=="Male")
+ADNI.F <- subset(ADNI.norm, Sex=="Female")
+
+OASIS.M <- subset(OASIS.norm, Sex =="M")
+OASIS.F <- subset(OASIS.norm, Sex =="F")
+
+
+#calc centroid for males and females
+HCP.M.cent <- apply(HCP.M[c(1:(length(HCP.M)-3))], 2, mean) 
+HCP.F.cent <- apply(HCP.F[c(1:(length(HCP.F)-3))], 2, mean) 
+HCP.M.cent.global <- apply(HCP.M[c("Total_GMFull.resid", "Tot_WMFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid")], 2, mean) 
+HCP.F.cent.global <- apply(HCP.F[c("Total_GMFull.resid", "Tot_WMFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid")], 2, mean) 
+HCP.M.cent.SC <- apply(HCP.M[c("L_ThalamusProperFull.resid", "L_CaudateFull.resid", "L_PutamenFull.resid", "L_PallidumFull.resid",
+                                "L_HippoFull.resid", "L_AmygdalaFull.resid", "L_AccumbensAreaFull.resid", "R_ThalamusProperFull.resid",
+                                "R_CaudateFull.resid", "R_PutamenFull.resid", "R_PallidumFull.resid", "R_HippoFull.resid", "R_AmygdalaFull.resid",
+                                "R_AccumbensAreaFull.resid")], 2, mean) 
+HCP.F.cent.SC <- apply(HCP.F[c("L_ThalamusProperFull.resid", "L_CaudateFull.resid", "L_PutamenFull.resid", "L_PallidumFull.resid",
+                                "L_HippoFull.resid", "L_AmygdalaFull.resid", "L_AccumbensAreaFull.resid", "R_ThalamusProperFull.resid",
+                                "R_CaudateFull.resid", "R_PutamenFull.resid", "R_PallidumFull.resid", "R_HippoFull.resid", "R_AmygdalaFull.resid",
+                                "R_AccumbensAreaFull.resid")], 2, mean) 
+HCP.M.cent.SA <- apply(select(HCP.M, starts_with("SA")), 2, mean) 
+HCP.F.cent.SA <- apply(select(HCP.M, starts_with("SA")), 2, mean) 
+HCP.M.cent.CT <- apply(select(HCP.M, starts_with("CT")), 2, mean) 
+HCP.F.cent.CT <- apply(select(HCP.M, starts_with("CT")), 2, mean) 
+
+## PNC
+PNC.M.cent <- apply(PNC.M[c(1:(length(PNC.M)-3))], 2, mean) 
+PNC.F.cent <- apply(PNC.F[c(1:(length(PNC.F)-3))], 2, mean) 
+PNC.M.cent.global <- apply(PNC.M[c("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid",
+                                   "Cerebellum_WMFull.resid")], 2, mean) 
+PNC.F.cent.global <- apply(PNC.F[c("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid",
+                                   "Cerebellum_WMFull.resid")], 2, mean) 
+PNC.M.cent.SC <- apply(PNC.M[c("Left.Thalamus.ProperFull.resid", "Left.CaudateFull.resid", "Left.PutamenFull.resid", "Left.PallidumFull.resid",
+                                "Left.HippocampusFull.resid", "Left.AmygdalaFull.resid", "Left.Accumbens.areaFull.resid",
+                               "Right.Thalamus.ProperFull.resid", "Right.CaudateFull.resid", "Right.PutamenFull.resid", "Right.PallidumFull.resid",
+                               "Right.HippocampusFull.resid", "Right.AmygdalaFull.resid", "Right.Accumbens.areaFull.resid")], 2, mean) 
+PNC.F.cent.SC <- apply(PNC.F[c("Left.Thalamus.ProperFull.resid", "Left.CaudateFull.resid", "Left.PutamenFull.resid", "Left.PallidumFull.resid",
+                                "Left.HippocampusFull.resid", "Left.AmygdalaFull.resid", "Left.Accumbens.areaFull.resid",
+                               "Right.Thalamus.ProperFull.resid", "Right.CaudateFull.resid", "Right.PutamenFull.resid", "Right.PallidumFull.resid",
+                               "Right.HippocampusFull.resid", "Right.AmygdalaFull.resid", "Right.Accumbens.areaFull.resid")], 2, mean) 
+PNC.M.cent.SA <- apply(select(PNC.M, starts_with("SA")), 2, mean) 
+PNC.F.cent.SA <- apply(select(PNC.M, starts_with("SA")), 2, mean) 
+PNC.M.cent.CT <- apply(select(PNC.M, starts_with("CT")), 2, mean) 
+PNC.F.cent.CT <- apply(select(PNC.M, starts_with("CT")), 2, mean) 
+
+
+#ADNI
+ADNI.M.cent <- apply(ADNI.M[c(1:(length(ADNI.M)-3))], 2, mean) 
+ADNI.F.cent <- apply(ADNI.F[c(1:(length(ADNI.F)-3))], 2, mean) 
+ADNI.M.cent.global <- apply(ADNI.M[c("Total_GMFull.resid", "Tot_WMFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid")], 2, mean) 
+ADNI.F.cent.global <- apply(ADNI.F[c("Total_GMFull.resid", "Tot_WMFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid")], 2, mean) 
+ADNI.M.cent.SC <- apply(ADNI.M[c("L_ThalamusFull.resid", "L_CaudateFull.resid", "L_PutamenFull.resid", "L_PallidumFull.resid",
+                                "L_HippocampusFull.resid", "L_AmygdalaFull.resid", "L_AccumbensAreaFull.resid", "R_ThalamusFull.resid",
+                                "R_CaudateFull.resid", "R_PutamenFull.resid", "R_PallidumFull.resid", "R_HippocampusFull.resid",
+                                "R_AmygdalaFull.resid", "R_AccumbensAreaFull.resid")], 2, mean) 
+ADNI.F.cent.SC <- apply(ADNI.F[c("L_ThalamusFull.resid", "L_CaudateFull.resid", "L_PutamenFull.resid", "L_PallidumFull.resid",
+                                "L_HippocampusFull.resid", "L_AmygdalaFull.resid", "L_AccumbensAreaFull.resid", "R_ThalamusFull.resid",
+                                "R_CaudateFull.resid", "R_PutamenFull.resid", "R_PallidumFull.resid", "R_HippocampusFull.resid",
+                                "R_AmygdalaFull.resid", "R_AccumbensAreaFull.resid")], 2, mean) 
+ADNI.M.cent.SA <- apply(select(ADNI.M, starts_with("SA")), 2, mean) 
+ADNI.F.cent.SA <- apply(select(ADNI.M, starts_with("SA")), 2, mean) 
+ADNI.M.cent.CT <- apply(select(ADNI.M, starts_with("CT")), 2, mean) 
+ADNI.F.cent.CT <- apply(select(ADNI.M, starts_with("CT")), 2, mean) 
+
+##OASIS
+OASIS.M.cent <- apply(OASIS.M[c(1:(length(OASIS.M)-3))], 2, mean) 
+OASIS.F.cent <- apply(OASIS.F[c(1:(length(OASIS.F)-3))], 2, mean) 
+OASIS.M.cent.global <- apply(OASIS.M[c("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid",
+                                   "Cerebellum_WMFull.resid")], 2, mean) 
+OASIS.F.cent.global <- apply(OASIS.F[c("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid",
+                                   "Cerebellum_WMFull.resid")], 2, mean) 
+OASIS.M.cent.SC <- apply(OASIS.M[c("lh_Thalamus.ProperFull.resid", "lh_CaudateFull.resid", "lh_PutamenFull.resid", "lh_PallidumFull.resid",
+                                "lh_HippocampusFull.resid", "lh_AmygdalaFull.resid", "lh_Accumbens.areaFull.resid",
+                               "rh_Thalamus.ProperFull.resid", "rh_CaudateFull.resid", "rh_PutamenFull.resid", "rh_PallidumFull.resid",
+                               "rh_HippocampusFull.resid", "rh_AmygdalaFull.resid", "rh_Accumbens.areaFull.resid")], 2, mean) 
+OASIS.F.cent.SC <- apply(OASIS.F[c("lh_Thalamus.ProperFull.resid", "lh_CaudateFull.resid", "lh_PutamenFull.resid", "lh_PallidumFull.resid",
+                                "lh_HippocampusFull.resid", "lh_AmygdalaFull.resid", "lh_Accumbens.areaFull.resid",
+                               "rh_Thalamus.ProperFull.resid", "rh_CaudateFull.resid", "rh_PutamenFull.resid", "rh_PallidumFull.resid",
+                               "rh_HippocampusFull.resid", "rh_AmygdalaFull.resid", "rh_Accumbens.areaFull.resid")], 2, mean) 
+OASIS.M.cent.SA <- apply(select(OASIS.M, starts_with("SA")), 2, mean) 
+OASIS.F.cent.SA <- apply(select(OASIS.M, starts_with("SA")), 2, mean) 
+OASIS.M.cent.CT <- apply(select(OASIS.M, starts_with("CT")), 2, mean) 
+OASIS.F.cent.CT <- apply(select(OASIS.M, starts_with("CT")), 2, mean) 
+
+#calculate euclidean distance to centroid for each sub
+HCP.M$Total.euc <- apply(HCP.M[c(1:(length(HCP.M)-3))], 1, euc.dist, y=HCP.M.cent)
+HCP.M$Global.euc <- apply(HCP.M[c("Total_GMFull.resid", "Tot_WMFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid")],
+                          1, euc.dist, y=HCP.M.cent.global)
+HCP.M$SC.euc <- apply(HCP.M[c("L_ThalamusProperFull.resid", "L_CaudateFull.resid", "L_PutamenFull.resid", "L_PallidumFull.resid",
+                                "L_HippoFull.resid", "L_AmygdalaFull.resid", "L_AccumbensAreaFull.resid", "R_ThalamusProperFull.resid",
+                                "R_CaudateFull.resid", "R_PutamenFull.resid", "R_PallidumFull.resid", "R_HippoFull.resid", "R_AmygdalaFull.resid",
+                                "R_AccumbensAreaFull.resid")], 1, euc.dist, y=HCP.M.cent.SC)
+HCP.M$SA.euc <- apply(select(HCP.M, starts_with("SA")), 1, euc.dist, y=HCP.M.cent.SA)
+HCP.M$CT.euc <- apply(select(HCP.M, starts_with("CT")), 1, euc.dist, y=HCP.M.cent.CT)
+
+
+HCP.F$Total.euc <- apply(HCP.F[c(1:(length(HCP.F)-3))], 1, euc.dist, y=HCP.F.cent) 
+HCP.F$Global.euc <- apply(HCP.F[c("Total_GMFull.resid", "Tot_WMFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid")],
+                          1, euc.dist, y=HCP.F.cent.global)
+HCP.F$SC.euc <- apply(HCP.F[c("L_ThalamusProperFull.resid", "L_CaudateFull.resid", "L_PutamenFull.resid", "L_PallidumFull.resid",
+                                "L_HippoFull.resid", "L_AmygdalaFull.resid", "L_AccumbensAreaFull.resid", "R_ThalamusProperFull.resid",
+                                "R_CaudateFull.resid", "R_PutamenFull.resid", "R_PallidumFull.resid", "R_HippoFull.resid", "R_AmygdalaFull.resid",
+                                "R_AccumbensAreaFull.resid")], 1, euc.dist, y=HCP.F.cent.SC)
+HCP.F$SA.euc <- apply(select(HCP.F, starts_with("SA")), 1, euc.dist, y=HCP.F.cent.SA)
+HCP.F$CT.euc <- apply(select(HCP.F, starts_with("CT")), 1, euc.dist, y=HCP.F.cent.CT)
+
+HCP.euc <- rbind(HCP.M, HCP.F)
+
+##PNC
+PNC.M$Total.euc <- apply(PNC.M[c(1:(length(PNC.M)-3))], 1, euc.dist, y=PNC.M.cent) 
+PNC.M$Global.euc <- apply(PNC.M[c("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid",
+                                   "Cerebellum_WMFull.resid")],
+                          1, euc.dist, y=PNC.M.cent.global)
+PNC.M$SC.euc <- apply(PNC.M[c("Left.Thalamus.ProperFull.resid", "Left.CaudateFull.resid", "Left.PutamenFull.resid", "Left.PallidumFull.resid",
+                                "Left.HippocampusFull.resid", "Left.AmygdalaFull.resid", "Left.Accumbens.areaFull.resid",
+                               "Right.Thalamus.ProperFull.resid", "Right.CaudateFull.resid", "Right.PutamenFull.resid", "Right.PallidumFull.resid",
+                               "Right.HippocampusFull.resid", "Right.AmygdalaFull.resid", "Right.Accumbens.areaFull.resid")],
+                      1, euc.dist, y=PNC.M.cent.SC)
+PNC.M$SA.euc <- apply(select(PNC.M, starts_with("SA")), 1, euc.dist, y=PNC.M.cent.SA)
+PNC.M$CT.euc <- apply(select(PNC.M, starts_with("CT")), 1, euc.dist, y=PNC.M.cent.CT)
+
+PNC.F$Total.euc <- apply(PNC.F[c(1:(length(PNC.F)-3))], 1, euc.dist, y=PNC.F.cent) 
+PNC.F$Global.euc <- apply(PNC.F[c("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid",
+                                   "Cerebellum_WMFull.resid")],
+                          1, euc.dist, y=PNC.F.cent.global)
+PNC.F$SC.euc <- apply(PNC.F[c("Left.Thalamus.ProperFull.resid", "Left.CaudateFull.resid", "Left.PutamenFull.resid", "Left.PallidumFull.resid",
+                                "Left.HippocampusFull.resid", "Left.AmygdalaFull.resid", "Left.Accumbens.areaFull.resid",
+                               "Right.Thalamus.ProperFull.resid", "Right.CaudateFull.resid", "Right.PutamenFull.resid", "Right.PallidumFull.resid",
+                               "Right.HippocampusFull.resid", "Right.AmygdalaFull.resid", "Right.Accumbens.areaFull.resid")],
+                      1, euc.dist, y=PNC.F.cent.SC)
+PNC.F$SA.euc <- apply(select(PNC.F, starts_with("SA")), 1, euc.dist, y=PNC.F.cent.SA)
+PNC.F$CT.euc <- apply(select(PNC.F, starts_with("CT")), 1, euc.dist, y=PNC.F.cent.CT)
+
+PNC.euc <- rbind(PNC.M, PNC.F)
+
+#ADNI
+ADNI.M$Total.euc <- apply(ADNI.M[c(1:(length(ADNI.M)-3))], 1, euc.dist, y=ADNI.M.cent) 
+ADNI.M$Global.euc <- apply(ADNI.M[c("Total_GMFull.resid", "Tot_WMFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid")],
+                          1, euc.dist, y=ADNI.M.cent.global)
+ADNI.M$SC.euc <- apply(ADNI.M[c("L_ThalamusFull.resid", "L_CaudateFull.resid", "L_PutamenFull.resid", "L_PallidumFull.resid",
+                                "L_HippocampusFull.resid", "L_AmygdalaFull.resid", "L_AccumbensAreaFull.resid", "R_ThalamusFull.resid",
+                                "R_CaudateFull.resid", "R_PutamenFull.resid", "R_PallidumFull.resid", "R_HippocampusFull.resid",
+                                "R_AmygdalaFull.resid", "R_AccumbensAreaFull.resid")], 1, euc.dist, y=ADNI.M.cent.SC)
+ADNI.M$SA.euc <- apply(select(ADNI.M, starts_with("SA")), 1, euc.dist, y=ADNI.M.cent.SA)
+ADNI.M$CT.euc <- apply(select(ADNI.M, starts_with("CT")), 1, euc.dist, y=ADNI.M.cent.CT)
+
+ADNI.F$Total.euc <- apply(ADNI.F[c(1:(length(ADNI.F)-3))], 1, euc.dist, y=ADNI.F.cent) 
+ADNI.F$Global.euc <- apply(ADNI.F[c("Total_GMFull.resid", "Tot_WMFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid")],
+                          1, euc.dist, y=ADNI.F.cent.global)
+ADNI.F$SC.euc <- apply(ADNI.F[c("L_ThalamusFull.resid", "L_CaudateFull.resid", "L_PutamenFull.resid", "L_PallidumFull.resid",
+                                "L_HippocampusFull.resid", "L_AmygdalaFull.resid", "L_AccumbensAreaFull.resid", "R_ThalamusFull.resid",
+                                "R_CaudateFull.resid", "R_PutamenFull.resid", "R_PallidumFull.resid", "R_HippocampusFull.resid",
+                                "R_AmygdalaFull.resid", "R_AccumbensAreaFull.resid")], 1, euc.dist, y=ADNI.F.cent.SC)
+ADNI.F$SA.euc <- apply(select(ADNI.F, starts_with("SA")), 1, euc.dist, y=ADNI.F.cent.SA)
+ADNI.F$CT.euc <- apply(select(ADNI.F, starts_with("CT")), 1, euc.dist, y=ADNI.F.cent.CT)
+
+ADNI.euc <- rbind(ADNI.M, ADNI.F)
+
+#OASIS
+OASIS.M$Total.euc <- apply(OASIS.M[c(1:(length(OASIS.M)-3))], 1, euc.dist, y=OASIS.M.cent) 
+OASIS.M$Global.euc <- apply(OASIS.M[c("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid",
+                                   "Cerebellum_WMFull.resid")], 1, euc.dist, y=OASIS.M.cent.global)
+OASIS.M$SC.euc <- apply(OASIS.M[c("lh_Thalamus.ProperFull.resid", "lh_CaudateFull.resid", "lh_PutamenFull.resid", "lh_PallidumFull.resid",
+                                "lh_HippocampusFull.resid", "lh_AmygdalaFull.resid", "lh_Accumbens.areaFull.resid",
+                               "rh_Thalamus.ProperFull.resid", "rh_CaudateFull.resid", "rh_PutamenFull.resid", "rh_PallidumFull.resid",
+                               "rh_HippocampusFull.resid", "rh_AmygdalaFull.resid", "rh_Accumbens.areaFull.resid")],
+                        1, euc.dist, y=OASIS.M.cent.SC)
+OASIS.M$SA.euc <- apply(select(OASIS.M, starts_with("SA")), 1, euc.dist, y=OASIS.M.cent.SA)
+OASIS.M$CT.euc <- apply(select(OASIS.M, starts_with("CT")), 1, euc.dist, y=OASIS.M.cent.CT)
+
+OASIS.F$Total.euc <- apply(OASIS.F[c(1:(length(OASIS.F)-3))], 1, euc.dist, y=OASIS.F.cent) 
+OASIS.F$Global.euc <- apply(OASIS.F[c("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid",
+                                   "Cerebellum_WMFull.resid")], 1, euc.dist, y=OASIS.F.cent.global)
+OASIS.F$SC.euc <- apply(OASIS.F[c("lh_Thalamus.ProperFull.resid", "lh_CaudateFull.resid", "lh_PutamenFull.resid", "lh_PallidumFull.resid",
+                                "lh_HippocampusFull.resid", "lh_AmygdalaFull.resid", "lh_Accumbens.areaFull.resid",
+                               "rh_Thalamus.ProperFull.resid", "rh_CaudateFull.resid", "rh_PutamenFull.resid", "rh_PallidumFull.resid",
+                               "rh_HippocampusFull.resid", "rh_AmygdalaFull.resid", "rh_Accumbens.areaFull.resid")],
+                        1, euc.dist, y=OASIS.F.cent.SC)
+OASIS.F$SA.euc <- apply(select(OASIS.F, starts_with("SA")), 1, euc.dist, y=OASIS.F.cent.SA)
+OASIS.F$CT.euc <- apply(select(OASIS.F, starts_with("CT")), 1, euc.dist, y=OASIS.F.cent.CT)
+OASIS.euc <- rbind(OASIS.M, OASIS.F)
+
+#get stats from each dataset
+# df.ls <- c("PNC.euc", "HCP.euc", "OASIS.euc", "ADNI.euc")
+df.ls <- c("PNC.euc", "HCP.euc", "OASIS.euc")
+Total  <- lapply(df.ls, function(i){
+  t.test(Total.euc ~ Sex , data=get(i))
+})
+#num=length(Total)
+num=4
+Totalstats <- extractT(Total, num)
+
+Global  <- lapply(df.ls, function(i){
+  t.test(Global.euc ~ Sex , data=get(i))
+})
+Globalstats <- extractT(Global, num)
+
+SC  <- lapply(df.ls, function(i){
+  t.test(SC.euc ~ Sex , data=get(i))
+})
+SCstats <- extractT(SC, num)
+
+SA  <- lapply(df.ls, function(i){
+  t.test(SA.euc ~ Sex , data=get(i))
+})
+SAstats <- extractT(SA, num)
+
+CT  <- lapply(df.ls, function(i){
+  t.test(CT.euc ~ Sex , data=get(i))
+})
+CTstats <- extractT(CT, num)
+
+names(Totalstats) <- paste0('Tot_',names(Totalstats))
+names(Globalstats) <- paste0('Glo_',names(Globalstats))
+names(SCstats) <- paste0('SC_',names(SCstats))
+names(SAstats) <- paste0('SA_',names(SAstats))
+names(CTstats) <- paste0('CT_',names(CTstats))
+
+stats <- cbind(Totalstats, Globalstats, SCstats, SAstats, CTstats)
+
+stats <- apply(stats,2,as.character)
+rownames(stats) <- df.ls
+Euc.out.file <- paste(outdir, "Euc_stats.csv", sep="/")
+write.csv(stats, file=Euc.out.file, row.names = T)
+print(stats)
+
+```
+#Plotting Euclidean distance
+```{r}
+
+HCP.plt.gl <- ggplot(HCP.euc, aes(x="Sex", fill= Sex, y=Global.euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + ylim(0,10) +
+                      stat_summary(aes(y=Global.euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+PNC.plt.gl <- ggplot(PNC.euc, aes(x="Sex", fill= Sex, y=Global.euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + ylim(0,10) +
+                      stat_summary(aes(y=Global.euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+ADNI.plt.gl <- ggplot(ADNI.euc, aes(x="Sex", fill= Sex, y=Global.euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + ylim(0,10) +
+                      stat_summary(aes(y=Global.euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+OASIS.plt.gl <- ggplot(OASIS.euc, aes(x="Sex", fill= Sex, y=Global.euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + ylim(0,10) +
+                      stat_summary(aes(y=Global.euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+#SC
+HCP.plt.sc <- ggplot(HCP.euc, aes(x="Sex", fill= Sex, y=SC.euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + ylim(0,15) +
+                      stat_summary(aes(y=SC.euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+PNC.plt.sc <- ggplot(PNC.euc, aes(x="Sex", fill= Sex, y=SC.euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + ylim(0,15) +
+                      stat_summary(aes(y=SC.euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+ADNI.plt.sc <- ggplot(ADNI.euc, aes(x="Sex", fill= Sex, y=SC.euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + ylim(0,15) +
+                      stat_summary(aes(y=SC.euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+OASIS.plt.sc <- ggplot(OASIS.euc, aes(x="Sex", fill= Sex, y=SC.euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + ylim(0,15) +
+                      stat_summary(aes(y=SC.euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+#SA
+HCP.plt.sa <- ggplot(HCP.euc, aes(x="Sex", fill= Sex, y=SA.euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + ylim(0,20) +
+                      stat_summary(aes(y=SA.euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+PNC.plt.sa <- ggplot(PNC.euc, aes(x="Sex", fill= Sex, y=SA.euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + ylim(0,20) +
+                      stat_summary(aes(y=SA.euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+ADNI.plt.sa <- ggplot(ADNI.euc, aes(x="Sex", fill= Sex, y=SA.euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + ylim(0,20) +
+                      stat_summary(aes(y=SA.euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+OASIS.plt.sa <- ggplot(OASIS.euc, aes(x="Sex", fill= Sex, y=SA.euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + ylim(0,20) +
+                      stat_summary(aes(y=SA.euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+#CT
+HCP.plt.ct <- ggplot(HCP.euc, aes(x="Sex", fill= Sex, y=CT.euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + ylim(0,25) +
+                      stat_summary(aes(y=CT.euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+PNC.plt.ct <- ggplot(PNC.euc, aes(x="Sex", fill= Sex, y=CT.euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + ylim(0,25) +
+                      stat_summary(aes(y=CT.euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+ADNI.plt.ct <- ggplot(ADNI.euc, aes(x="Sex", fill= Sex, y=CT.euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + ylim(0,25) +
+                      stat_summary(aes(y=CT.euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+OASIS.plt.ct <- ggplot(OASIS.euc, aes(x="Sex", fill= Sex, y=CT.euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + ylim(0,25) +
+                      stat_summary(aes(y=CT.euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+# plot_grid(PNC.plt, HCP.plt, OASIS.plt,  ADNI.plt, align="hv", ncol = 4)
+plot_grid(PNC.plt.gl, HCP.plt.gl, OASIS.plt.gl, PNC.plt.sc, HCP.plt.sc, OASIS.plt.sc, PNC.plt.sa, HCP.plt.sa, OASIS.plt.sa, 
+          PNC.plt.ct, HCP.plt.ct, OASIS.plt.ct, align="hv", ncol = 3)
+# Euc.plt <- plot_grid(PNC.plt, HCP.plt, OASIS.plt, ADNI.plt, align="hv", ncol = 4)
+Euc.plt <- plot_grid(PNC.plt.gl, HCP.plt.gl, OASIS.plt.gl, PNC.plt.sc, HCP.plt.sc, OASIS.plt.sc, PNC.plt.sa, HCP.plt.sa, OASIS.plt.sa, 
+          PNC.plt.ct, HCP.plt.ct, OASIS.plt.ct, align="hv", ncol = 3)
+
+Euc.plt.file <- paste(outdir, "Comb_Euclidean.png", sep="/")
+ggsave(Euc.plt.file, Euc.plt, dpi=300, width = 21, height = 20, units = "cm") #####
+
+
+#### divide up samples by age
+
+
+PNC.under10 <- ggplot(filter(PNC.euc, age_at_cnb < 10), aes(x="Sex", fill= Sex, y=euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8),
+                      axis.title.x=element_text(size=15), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + xlab("PNC < 10 years") + ylim(0,30) +
+                      stat_summary(aes(y=euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+PNC.10.15 <- ggplot(filter(PNC.euc, age_at_cnb >= 10, age_at_cnb < 15), aes(x="Sex", fill= Sex, y=euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8),
+                      axis.title.x=element_text(size=15), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + xlab("PNC 10-15 years") + ylim(0,30) +
+                      stat_summary(aes(y=euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+PNC.15.20 <- ggplot(filter(PNC.euc, age_at_cnb >= 15, age_at_cnb < 20), aes(x="Sex", fill= Sex, y=euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8),
+                      axis.title.x=element_text(size=15), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + xlab("PNC 15-20 years") + ylim(0,30) +
+                      stat_summary(aes(y=euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+PNC.over20 <- ggplot(filter(PNC.euc, age_at_cnb >= 20), aes(x="Sex", fill= Sex, y=euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8),
+                      axis.title.x=element_text(size=15), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + xlab("PNC > 20 years") + ylim(0,30) +
+                      stat_summary(aes(y=euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+HCP.under25 <- ggplot(filter(HCP.euc, Age_in_Yrs <25), aes(x="Sex", fill= Sex, y=euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8),
+                      axis.title.x=element_text(size=15), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + xlab("HCP < 25 years") + ylim(0,30) +
+                      stat_summary(aes(y=euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+HCP.25.30 <- ggplot(filter(HCP.euc, Age_in_Yrs >= 25, Age_in_Yrs <30), aes(x="Sex", fill= Sex, y=euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8),
+                      axis.title.x=element_text(size=15), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + xlab("HCP 25-30 years") + ylim(0,30) +
+                      stat_summary(aes(y=euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+HCP.over30 <- ggplot(filter(HCP.euc, Age_in_Yrs >= 30), aes(x="Sex", fill= Sex, y=euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8),
+                      axis.title.x=element_text(size=15), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + xlab("HCP > 30 years") + ylim(0,30) +
+                      stat_summary(aes(y=euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+OASIS.under50 <- ggplot(filter(OASIS.euc, Age < 50), aes(x="Sex", fill= Sex, y=euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8),
+                      axis.title.x=element_text(size=15), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + xlab("OASIS < 50 years") + ylim(0,30) +
+                      stat_summary(aes(y=euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+OASIS.50.60 <- ggplot(filter(OASIS.euc, Age >= 50, Age < 60), aes(x="Sex", fill= Sex, y=euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8),
+                      axis.title.x=element_text(size=15), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + xlab("OASIS 50-60 years") + ylim(0,30) +
+                      stat_summary(aes(y=euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+OASIS.60.70 <- ggplot(filter(OASIS.euc, Age >= 60, Age < 70), aes(x="Sex", fill= Sex, y=euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8),
+                      axis.title.x=element_text(size=15), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + xlab("OASIS 60-70 years") + ylim(0,30) +
+                      stat_summary(aes(y=euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+OASIS.70.80 <- ggplot(filter(OASIS.euc, Age >= 70, Age < 80), aes(x="Sex", fill= Sex, y=euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8),
+                      axis.title.x=element_text(size=15), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + xlab("OASIS 70-80 years") + ylim(0,30) +
+                      stat_summary(aes(y=euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+OASIS.80.90 <- ggplot(filter(OASIS.euc, Age >= 80, Age < 90), aes(x="Sex", fill= Sex, y=euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8),
+                      axis.title.x=element_text(size=15), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + xlab("OASIS 80-90 years") + ylim(0,30) +
+                      stat_summary(aes(y=euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+ADNI.under70 <- ggplot(filter(ADNI.euc, Age < 70), aes(x="Sex", fill= Sex, y=euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8),
+                      axis.title.x=element_text(size=15), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + xlab("ADNI < 70 years") + ylim(0,30) +
+                      stat_summary(aes(y=euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+ADNI.70.80 <- ggplot(filter(ADNI.euc, Age >= 70, Age < 80), aes(x="Sex", fill= Sex, y=euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8),
+                      axis.title.x=element_text(size=15), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + xlab("ADNI 70-80 years") + ylim(0,30) +
+                      stat_summary(aes(y=euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+ADNI.over80 <- ggplot(filter(ADNI.euc, Age >= 80), aes(x="Sex", fill= Sex, y=euc)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8),
+                      axis.title.x=element_text(size=15), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Euclidean Distance") + xlab("ADNI > 80 years") + ylim(0,30) +
+                      stat_summary(aes(y=euc), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+plot_grid(PNC.under10, PNC.10.15, PNC.15.20, PNC.over20, HCP.under25, HCP.25.30, HCP.over30, OASIS.50.60, OASIS.60.70, 
+           OASIS.70.80, ADNI.70.80, OASIS.80.90, ADNI.over80, align="hv", ncol = 3)
+Euc_by_age <- plot_grid(PNC.under10, PNC.10.15, PNC.15.20, PNC.over20, HCP.under25, HCP.25.30, HCP.over30, OASIS.50.60, OASIS.60.70, 
+           OASIS.70.80, ADNI.70.80, OASIS.80.90, ADNI.over80, align="hv", ncol = 3)
+
+
+Euc.age.file <- paste(outdir, "Comb_Euclidean_Age.png", sep="/")
+
+ggsave(Euc.age.file, Euc_by_age, dpi=300, width = 21, height = 28, units = "cm") #####
+
+
+```
+
+## make unit vector
+```{r}
+# ### TEMPORARY ADDITION ###
+# HCP.norm <- HCP.res[c(2:length(HCP.res))]
+# 
+# PNC.norm <- PNC.res[c(2:length(PNC.res))]
+# 
+# ADNI.norm <- ADNI.res[c(2:length(ADNI.res))]
+# 
+# OASIS.norm <-OASIS.res[c(2:length(OASIS.res))]
+
+
+#HCP
+HCP.norm$sex.coded <- NA
+HCP.norm$sex.coded[HCP.norm$Sex=="Male"] <- 1
+HCP.norm$sex.coded[HCP.norm$Sex=="Female"] <- 2
+
+HCP.unit <- apply(HCP.norm[c(1:(length(HCP.norm)-4))], 1, unit1) %>% t() %>% cbind(HCP.norm[c("sex.coded", "Age_in_Yrs", "Subject", "Sex")])
+
+HCP.unit.global <- apply(HCP.norm[c("Total_GMFull.resid", "Tot_WMFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid")], 1, unit1) %>% 
+  t() %>% cbind(HCP.norm[c("sex.coded", "Age_in_Yrs", "Subject", "Sex")])
+
+HCP.unit.SC <- apply(HCP.norm[c("L_ThalamusProperFull.resid", "L_CaudateFull.resid", "L_PutamenFull.resid", "L_PallidumFull.resid",
+                                "L_HippoFull.resid", "L_AmygdalaFull.resid", "L_AccumbensAreaFull.resid", "R_ThalamusProperFull.resid",
+                                "R_CaudateFull.resid", "R_PutamenFull.resid", "R_PallidumFull.resid", "R_HippoFull.resid", "R_AmygdalaFull.resid",
+                                "R_AccumbensAreaFull.resid")], 1, unit1) %>% t() %>% cbind(HCP.norm[c("sex.coded", "Age_in_Yrs", "Subject", "Sex")])
+
+HCP.unit.SA <- apply(select(HCP.norm, starts_with("SA")), 1, unit1) %>% t() %>% cbind(HCP.norm[c("sex.coded", "Age_in_Yrs", "Subject", "Sex")])
+HCP.unit.CT <- apply(select(HCP.norm, starts_with("CT")), 1, unit1) %>% t() %>% cbind(HCP.norm[c("sex.coded", "Age_in_Yrs", "Subject", "Sex")])
+
+
+## PNC
+PNC.norm$sex.coded <- NA
+PNC.norm$sex.coded[PNC.norm$Sex=="M"] <- 1
+PNC.norm$sex.coded[PNC.norm$Sex=="F"] <- 2
+
+PNC.unit <- apply(PNC.norm[c(1:(length(PNC.norm)-4))], 1, unit1) %>% t() %>% cbind(PNC.norm[c("sex.coded", "age_at_cnb", "ID", "Sex")])
+
+PNC.unit.global <- apply(PNC.norm[c("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid",
+                                    "Cerebellum_WMFull.resid")], 1, unit1) %>% t() %>% cbind(PNC.norm[c("sex.coded", "age_at_cnb", "ID", "Sex")])
+
+PNC.unit.SC <- apply(PNC.norm[c("Left.Thalamus.ProperFull.resid", "Left.CaudateFull.resid", "Left.PutamenFull.resid", "Left.PallidumFull.resid",
+                                "Left.HippocampusFull.resid", "Left.AmygdalaFull.resid", "Left.Accumbens.areaFull.resid",
+                                "Right.Thalamus.ProperFull.resid", "Right.CaudateFull.resid", "Right.PutamenFull.resid", "Right.PallidumFull.resid",
+                                "Right.HippocampusFull.resid", "Right.AmygdalaFull.resid", "Right.Accumbens.areaFull.resid")], 1, unit1) %>%
+  t() %>% cbind(PNC.norm[c("sex.coded", "age_at_cnb", "ID", "Sex")])
+
+PNC.unit.SA <- apply(select(PNC.norm, starts_with("SA")), 1, unit1) %>% t() %>% cbind(PNC.norm[c("sex.coded", "age_at_cnb", "ID", "Sex")])
+PNC.unit.CT <- apply(select(PNC.norm, starts_with("CT")), 1, unit1) %>% t() %>% cbind(PNC.norm[c("sex.coded", "age_at_cnb", "ID", "Sex")])
+
+
+## ADNI
+ADNI.norm$sex.coded <- NA
+ADNI.norm$sex.coded[ADNI.norm$Sex=="Male"] <- 1
+ADNI.norm$sex.coded[ADNI.norm$Sex=="Female"] <- 2
+
+ADNI.unit <- apply(ADNI.norm[c(1:(length(ADNI.norm)-4))], 1, unit1) %>% t() %>% cbind(ADNI.norm[c("sex.coded", "Age", "RID", "Sex")])
+
+ADNI.unit.global <- apply(ADNI.norm[c("Total_GMFull.resid", "Tot_WMFull.resid", "Cerebellum_CortFull.resid",
+                                      "Cerebellum_WMFull.resid")], 1, unit1) %>% t() %>% cbind(ADNI.norm[c("sex.coded", "Age", "RID", "Sex")])
+
+ADNI.unit.SC <- apply(ADNI.norm[c("L_ThalamusFull.resid", "L_CaudateFull.resid", "L_PutamenFull.resid", "L_PallidumFull.resid",
+                                "L_HippocampusFull.resid", "L_AmygdalaFull.resid", "L_AccumbensAreaFull.resid", "R_ThalamusFull.resid",
+                                "R_CaudateFull.resid", "R_PutamenFull.resid", "R_PallidumFull.resid", "R_HippocampusFull.resid",
+                                "R_AmygdalaFull.resid", "R_AccumbensAreaFull.resid")], 1, unit1) %>%
+  t() %>% cbind(ADNI.norm[c("sex.coded", "Age", "RID", "Sex")])
+
+ADNI.unit.SA <- apply(select(ADNI.norm, starts_with("SA")), 1, unit1) %>% t() %>% cbind(ADNI.norm[c("sex.coded", "Age", "RID", "Sex")])
+ADNI.unit.CT <- apply(select(ADNI.norm, starts_with("CT")), 1, unit1) %>% t() %>% cbind(ADNI.norm[c("sex.coded", "Age", "RID", "Sex")])
+
+
+## OASIS
+OASIS.norm$sex.coded <- NA
+OASIS.norm$sex.coded[OASIS.norm$Sex=="M"] <- 1
+OASIS.norm$sex.coded[OASIS.norm$Sex=="F"] <- 2
+
+OASIS.unit <- apply(OASIS.norm[c(1:(length(OASIS.norm)-4))], 1, unit1) %>% t() %>% cbind(OASIS.norm[c("sex.coded", "Age", "Subject", "Sex")])
+
+OASIS.unit.global <- apply(OASIS.norm[c("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid",
+                                      "Cerebellum_WMFull.resid")], 1, unit1) %>% t() %>% cbind(OASIS.norm[c("sex.coded", "Age", "Subject", "Sex")])
+
+OASIS.unit.SC <- apply(OASIS.norm[c("lh_Thalamus.ProperFull.resid", "lh_CaudateFull.resid", "lh_PutamenFull.resid", "lh_PallidumFull.resid",
+                                "lh_HippocampusFull.resid", "lh_AmygdalaFull.resid", "lh_Accumbens.areaFull.resid", "rh_Thalamus.ProperFull.resid",
+                                "rh_CaudateFull.resid", "rh_PutamenFull.resid", "rh_PallidumFull.resid", "rh_HippocampusFull.resid",
+                                "rh_AmygdalaFull.resid", "rh_Accumbens.areaFull.resid")], 1, unit1) %>%
+  t() %>% cbind(OASIS.norm[c("sex.coded", "Age", "Subject", "Sex")])
+
+OASIS.unit.SA <- apply(select(OASIS.norm, starts_with("SA")), 1, unit1) %>% t() %>% cbind(OASIS.norm[c("sex.coded", "Age", "Subject", "Sex")])
+OASIS.unit.CT <- apply(select(OASIS.norm, starts_with("CT")), 1, unit1) %>% t() %>% cbind(OASIS.norm[c("sex.coded", "Age", "Subject", "Sex")])
+
+# #divid by sex
+# HCP.unit.M <- subset(HCP.unit, Sex =="Male")
+# HCP.unit.F <- subset(HCP.unit, Sex =="Female")
+# 
+# PNC.unit.M <- subset(PNC.unit, Sex=="Male")
+# PNC.unit.F <- subset(PNC.unit, Sex=="Female")
+# 
+# ADNI.unit.M <- subset(ADNI.unit, Sex=="Male")
+# ADNI.unit.F <- subset(ADNI.unit, Sex=="Female")
+
+```
+# get mu for unit sphere data
+```{r}
+#calc centroid (mu) for males and females (r/||r||, r= sum(x) , which in effect is the mean because they're all unit vectors! huzzar!)
+HCP.M.mu <- filter(HCP.unit, sex.coded ==1) %>% select(1:(length(.)-4)) %>% apply(2, mean) 
+HCP.F.mu <- filter(HCP.unit, sex.coded ==2) %>% select(1:(length(.)-4)) %>% apply(2, mean)
+
+HCP.M.mu.global <- filter(HCP.unit.global, sex.coded ==1) %>% 
+  select("Total_GMFull.resid", "Tot_WMFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid") %>% 
+  apply(2, mean)
+HCP.F.mu.global <- filter(HCP.unit.global, sex.coded ==2) %>% 
+  select("Total_GMFull.resid", "Tot_WMFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid") %>% 
+  apply(2, mean)
+
+HCP.M.mu.SC <- filter(HCP.unit.SC, sex.coded ==1) %>% 
+  select("L_ThalamusProperFull.resid", "L_CaudateFull.resid", "L_PutamenFull.resid", "L_PallidumFull.resid",
+  "L_HippoFull.resid", "L_AmygdalaFull.resid", "L_AccumbensAreaFull.resid", "R_ThalamusProperFull.resid",
+  "R_CaudateFull.resid", "R_PutamenFull.resid", "R_PallidumFull.resid", "R_HippoFull.resid", "R_AmygdalaFull.resid",
+  "R_AccumbensAreaFull.resid") %>%
+  apply(2, mean) 
+HCP.F.mu.SC <- filter(HCP.unit.SC, sex.coded ==2) %>% 
+  select("L_ThalamusProperFull.resid", "L_CaudateFull.resid", "L_PutamenFull.resid", "L_PallidumFull.resid",
+  "L_HippoFull.resid", "L_AmygdalaFull.resid", "L_AccumbensAreaFull.resid", "R_ThalamusProperFull.resid",
+  "R_CaudateFull.resid", "R_PutamenFull.resid", "R_PallidumFull.resid", "R_HippoFull.resid", "R_AmygdalaFull.resid",
+  "R_AccumbensAreaFull.resid") %>%
+  apply(2, mean) 
+
+HCP.M.mu.SA <- filter(HCP.unit.SA, sex.coded ==1) %>% 
+  select(starts_with("SA")) %>%
+  apply(2, mean) 
+HCP.F.mu.SA <- filter(HCP.unit.SA, sex.coded ==2) %>% 
+  select(starts_with("SA")) %>%
+  apply(2, mean)
+HCP.M.mu.CT <- filter(HCP.unit.CT, sex.coded ==1) %>% 
+  select(starts_with("CT")) %>%
+  apply(2, mean) 
+HCP.F.mu.CT <- filter(HCP.unit.CT, sex.coded ==2) %>% 
+  select(starts_with("CT")) %>%
+  apply(2, mean)
+
+## PNC
+PNC.M.mu <- filter(PNC.unit, sex.coded ==1) %>% select(1:(length(.)-4)) %>% apply(2, mean) 
+PNC.F.mu <- filter(PNC.unit, sex.coded ==2) %>% select(1:(length(.)-4)) %>% apply(2, mean)
+
+PNC.M.mu.global <- filter(PNC.unit.global, sex.coded ==1) %>% 
+  select("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid") %>%
+  apply(2, mean) 
+PNC.F.mu.global <- filter(PNC.unit.global, sex.coded ==2) %>% 
+  select("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid") %>%
+  apply(2, mean)
+
+PNC.M.mu.SC <- filter(PNC.unit.SC, sex.coded ==1) %>% 
+  select("Left.Thalamus.ProperFull.resid", "Left.CaudateFull.resid", "Left.PutamenFull.resid", "Left.PallidumFull.resid",
+  "Left.HippocampusFull.resid", "Left.AmygdalaFull.resid", "Left.Accumbens.areaFull.resid",
+  "Right.Thalamus.ProperFull.resid", "Right.CaudateFull.resid", "Right.PutamenFull.resid", "Right.PallidumFull.resid",
+  "Right.HippocampusFull.resid", "Right.AmygdalaFull.resid", "Right.Accumbens.areaFull.resid") %>% 
+  apply(2, mean) 
+PNC.F.mu.SC <- filter(PNC.unit.SC, sex.coded ==2) %>% 
+  select("Left.Thalamus.ProperFull.resid", "Left.CaudateFull.resid", "Left.PutamenFull.resid", "Left.PallidumFull.resid",
+  "Left.HippocampusFull.resid", "Left.AmygdalaFull.resid", "Left.Accumbens.areaFull.resid",
+  "Right.Thalamus.ProperFull.resid", "Right.CaudateFull.resid", "Right.PutamenFull.resid", "Right.PallidumFull.resid",
+  "Right.HippocampusFull.resid", "Right.AmygdalaFull.resid", "Right.Accumbens.areaFull.resid") %>% 
+  apply(2, mean) 
+  
+PNC.M.mu.SA <- filter(PNC.unit.SA, sex.coded ==1) %>% 
+  select(starts_with("SA")) %>%
+  apply(2, mean) 
+PNC.F.mu.SA <- filter(PNC.unit.SA, sex.coded ==2) %>% 
+  select(starts_with("SA")) %>%
+  apply(2, mean)
+PNC.M.mu.CT <- filter(PNC.unit.CT, sex.coded ==1) %>% 
+  select(starts_with("CT")) %>%
+  apply(2, mean) 
+PNC.F.mu.CT <- filter(PNC.unit.CT, sex.coded ==2) %>% 
+  select(starts_with("CT")) %>%
+  apply(2, mean)
+
+#ADNI
+ADNI.M.mu <- filter(ADNI.unit, sex.coded ==1) %>% select(1:(length(.)-4)) %>% apply(2, mean) 
+ADNI.F.mu <- filter(ADNI.unit, sex.coded ==2) %>% select(1:(length(.)-4)) %>% apply(2, mean)
+
+ADNI.M.mu.global <- filter(ADNI.unit.global, sex.coded ==1) %>%
+  select("Total_GMFull.resid", "Tot_WMFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid") %>% 
+  apply(2, mean) 
+ADNI.F.mu.global <-  filter(ADNI.unit.global, sex.coded ==2) %>%
+  select("Total_GMFull.resid", "Tot_WMFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid") %>% 
+  apply(2, mean) 
+
+ADNI.M.mu.SC <- filter(ADNI.unit.SC, sex.coded ==1) %>% 
+  select("L_ThalamusFull.resid", "L_CaudateFull.resid", "L_PutamenFull.resid", "L_PallidumFull.resid",
+  "L_HippocampusFull.resid", "L_AmygdalaFull.resid", "L_AccumbensAreaFull.resid",
+  "R_ThalamusFull.resid", "R_CaudateFull.resid", "R_PutamenFull.resid", "R_PallidumFull.resid",
+  "R_HippocampusFull.resid", "R_AmygdalaFull.resid", "R_AccumbensAreaFull.resid") %>% 
+  apply(2, mean) 
+ADNI.F.mu.SC <- filter(ADNI.unit.SC, sex.coded ==2) %>% 
+  select("L_ThalamusFull.resid", "L_CaudateFull.resid", "L_PutamenFull.resid", "L_PallidumFull.resid",
+  "L_HippocampusFull.resid", "L_AmygdalaFull.resid", "L_AccumbensAreaFull.resid",
+  "R_ThalamusFull.resid", "R_CaudateFull.resid", "R_PutamenFull.resid", "R_PallidumFull.resid",
+  "R_HippocampusFull.resid", "R_AmygdalaFull.resid", "R_AccumbensAreaFull.resid") %>% 
+  apply(2, mean)  
+
+ADNI.M.mu.SA <- filter(ADNI.unit.SA, sex.coded ==1) %>% 
+  select(starts_with("SA")) %>%
+  apply(2, mean) 
+ADNI.F.mu.SA <- filter(ADNI.unit.SA, sex.coded ==2) %>% 
+  select(starts_with("SA")) %>%
+  apply(2, mean)
+ADNI.M.mu.CT <- filter(ADNI.unit.CT, sex.coded ==1) %>% 
+  select(starts_with("CT")) %>%
+  apply(2, mean) 
+ADNI.F.mu.CT <- filter(ADNI.unit.CT, sex.coded ==2) %>% 
+  select(starts_with("CT")) %>%
+  apply(2, mean)
+
+##OASIS
+OASIS.M.mu <- filter(OASIS.unit, sex.coded ==1) %>% select(1:(length(.)-4)) %>% apply(2, mean) 
+OASIS.F.mu <- filter(OASIS.unit, sex.coded ==2) %>% select(1:(length(.)-4)) %>% apply(2, mean) 
+
+OASIS.M.mu.global <- filter(OASIS.unit.global, sex.coded ==1) %>% 
+  select("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid") %>% 
+  apply(2, mean) 
+OASIS.F.mu.global <- filter(OASIS.unit.global, sex.coded ==2) %>% 
+  select("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid") %>% 
+  apply(2, mean) 
+
+OASIS.M.mu.SC <- filter(OASIS.unit.SC, sex.coded ==1) %>% 
+  select("lh_Thalamus.ProperFull.resid", "lh_CaudateFull.resid", "lh_PutamenFull.resid", "lh_PallidumFull.resid",
+  "lh_HippocampusFull.resid", "lh_AmygdalaFull.resid", "lh_Accumbens.areaFull.resid",
+  "rh_Thalamus.ProperFull.resid", "rh_CaudateFull.resid", "rh_PutamenFull.resid", "rh_PallidumFull.resid",
+  "rh_HippocampusFull.resid", "rh_AmygdalaFull.resid", "rh_Accumbens.areaFull.resid") %>% 
+  apply(2, mean) 
+OASIS.F.mu.SC <- filter(OASIS.unit.SC, sex.coded ==2) %>% 
+  select("lh_Thalamus.ProperFull.resid", "lh_CaudateFull.resid", "lh_PutamenFull.resid", "lh_PallidumFull.resid",
+  "lh_HippocampusFull.resid", "lh_AmygdalaFull.resid", "lh_Accumbens.areaFull.resid",
+  "rh_Thalamus.ProperFull.resid", "rh_CaudateFull.resid", "rh_PutamenFull.resid", "rh_PallidumFull.resid",
+  "rh_HippocampusFull.resid", "rh_AmygdalaFull.resid", "rh_Accumbens.areaFull.resid") %>% 
+  apply(2, mean) 
+
+OASIS.M.mu.SA <- filter(OASIS.unit.SA, sex.coded ==1) %>% 
+  select(starts_with("SA")) %>%
+  apply(2, mean) 
+OASIS.F.mu.SA <- filter(OASIS.unit.SA, sex.coded ==2) %>% 
+  select(starts_with("SA")) %>%
+  apply(2, mean)
+OASIS.M.mu.CT <- filter(OASIS.unit.CT, sex.coded ==1) %>% 
+  select(starts_with("CT")) %>%
+  apply(2, mean) 
+OASIS.F.mu.CT <- filter(OASIS.unit.CT, sex.coded ==2) %>% 
+  select(starts_with("CT")) %>%
+  apply(2, mean)
+
+```
+#calculate cosine similarity (angle between sub and mu)
+```{r}
+
+HCP.M$Total.cos <- filter(HCP.unit, sex.coded ==1) %>% select(1:(length(.)-4)) %>% apply(1, cos.dist, y=HCP.M.mu)
+HCP.M$Global.cos <- filter(HCP.unit.global, sex.coded ==1) %>% 
+  select("Total_GMFull.resid", "Tot_WMFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid") %>% 
+  apply(1, cos.dist, y=HCP.M.mu.global)
+
+HCP.M$SC.cos <- filter(HCP.unit.SC, sex.coded ==1) %>% 
+  select("L_ThalamusProperFull.resid", "L_CaudateFull.resid", "L_PutamenFull.resid", "L_PallidumFull.resid",
+        "L_HippoFull.resid", "L_AmygdalaFull.resid", "L_AccumbensAreaFull.resid", "R_ThalamusProperFull.resid",
+        "R_CaudateFull.resid", "R_PutamenFull.resid", "R_PallidumFull.resid", "R_HippoFull.resid", "R_AmygdalaFull.resid",
+        "R_AccumbensAreaFull.resid") %>%
+  apply(1, cos.dist, y=HCP.M.mu.SC)
+
+HCP.M$SA.cos <- filter(HCP.unit.SA, sex.coded ==1) %>% 
+  select(starts_with("SA")) %>% 
+  apply(1, cos.dist, y=HCP.M.mu.SA)
+HCP.M$CT.cos <- filter(HCP.unit.CT, sex.coded ==1) %>% 
+  select(starts_with("CT")) %>% 
+  apply(1, cos.dist, y=HCP.M.mu.CT)
+
+HCP.F$Total.cos <- filter(HCP.unit, sex.coded ==2) %>% select(1:(length(.)-4)) %>% apply(1, cos.dist, y=HCP.F.mu)
+HCP.F$Global.cos <- filter(HCP.unit.global, sex.coded ==2) %>% 
+  select("Total_GMFull.resid", "Tot_WMFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid") %>% 
+  apply(1, cos.dist, y=HCP.F.mu.global)
+
+HCP.F$SC.cos <- filter(HCP.unit.SC, sex.coded ==2) %>% 
+  select("L_ThalamusProperFull.resid", "L_CaudateFull.resid", "L_PutamenFull.resid", "L_PallidumFull.resid",
+        "L_HippoFull.resid", "L_AmygdalaFull.resid", "L_AccumbensAreaFull.resid", "R_ThalamusProperFull.resid",
+        "R_CaudateFull.resid", "R_PutamenFull.resid", "R_PallidumFull.resid", "R_HippoFull.resid", "R_AmygdalaFull.resid",
+        "R_AccumbensAreaFull.resid") %>%
+  apply(1, cos.dist, y=HCP.F.mu.SC)
+
+HCP.F$SA.cos <- filter(HCP.unit.SA, sex.coded ==2) %>% 
+  select(starts_with("SA")) %>% 
+  apply(1, cos.dist, y=HCP.F.mu.SA)
+HCP.F$CT.cos <- filter(HCP.unit.CT, sex.coded ==2) %>% 
+  select(starts_with("CT")) %>% 
+  apply(1, cos.dist, y=HCP.F.mu.CT)
+
+HCP.cos <- rbind(HCP.M, HCP.F)
+
+##PNC
+PNC.M$Total.cos <- filter(PNC.unit, sex.coded ==1) %>% select(1:(length(.)-4)) %>% apply(1, cos.dist, y=PNC.M.mu)
+PNC.M$Global.cos <- filter(PNC.unit.global, sex.coded ==1) %>% 
+  select("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid") %>%
+  apply(1, cos.dist, y=PNC.M.mu.global)
+
+PNC.M$SC.cos <- filter(PNC.unit.SC, sex.coded ==1) %>% 
+  select("Left.Thalamus.ProperFull.resid", "Left.CaudateFull.resid", "Left.PutamenFull.resid", "Left.PallidumFull.resid",
+  "Left.HippocampusFull.resid", "Left.AmygdalaFull.resid", "Left.Accumbens.areaFull.resid",
+  "Right.Thalamus.ProperFull.resid", "Right.CaudateFull.resid", "Right.PutamenFull.resid", "Right.PallidumFull.resid",
+   "Right.HippocampusFull.resid", "Right.AmygdalaFull.resid", "Right.Accumbens.areaFull.resid") %>%
+  apply(1, cos.dist, y=PNC.M.mu.SC)
+
+PNC.M$SA.cos <- filter(PNC.unit.SA, sex.coded ==1) %>% select(starts_with("SA")) %>% apply(1, cos.dist, y=PNC.M.mu.SA)
+PNC.M$CT.cos <- filter(PNC.unit.CT, sex.coded ==1) %>% select(starts_with("CT")) %>% apply(1, cos.dist, y=PNC.M.mu.CT)
+
+PNC.F$Total.cos <- filter(PNC.unit, sex.coded ==2) %>% select(1:(length(.)-4)) %>% apply(1, cos.dist, y=PNC.F.mu)
+PNC.F$Global.cos <- filter(PNC.unit.global, sex.coded ==2) %>% 
+  select("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid") %>%
+  apply(1, cos.dist, y=PNC.F.mu.global)
+
+PNC.F$SC.cos <- filter(PNC.unit.SC, sex.coded ==2) %>% 
+  select("Left.Thalamus.ProperFull.resid", "Left.CaudateFull.resid", "Left.PutamenFull.resid", "Left.PallidumFull.resid",
+  "Left.HippocampusFull.resid", "Left.AmygdalaFull.resid", "Left.Accumbens.areaFull.resid",
+  "Right.Thalamus.ProperFull.resid", "Right.CaudateFull.resid", "Right.PutamenFull.resid", "Right.PallidumFull.resid",
+   "Right.HippocampusFull.resid", "Right.AmygdalaFull.resid", "Right.Accumbens.areaFull.resid") %>%
+  apply(1, cos.dist, y=PNC.F.mu.SC)
+
+PNC.F$SA.cos <- filter(PNC.unit.SA, sex.coded ==2) %>% select(starts_with("SA")) %>% apply(1, cos.dist, y=PNC.F.mu.SA)
+PNC.F$CT.cos <- filter(PNC.unit.CT, sex.coded ==2) %>% select(starts_with("CT")) %>% apply(1, cos.dist, y=PNC.F.mu.CT)
+
+PNC.cos <- rbind(PNC.M, PNC.F)
+
+
+#OASIS
+OASIS.M$Total.cos <- filter(OASIS.unit, sex.coded ==1) %>% select(1:(length(.)-4)) %>% apply(1, cos.dist, y=OASIS.M.mu)
+OASIS.M$Global.cos <- filter(OASIS.unit.global, sex.coded ==1) %>% 
+  select("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid") %>%
+  apply(1, cos.dist, y=OASIS.M.mu.global)
+
+OASIS.M$SC.cos <-filter(OASIS.unit.SC, sex.coded ==1) %>% 
+  select("lh_Thalamus.ProperFull.resid", "lh_CaudateFull.resid", "lh_PutamenFull.resid", "lh_PallidumFull.resid",
+  "lh_HippocampusFull.resid", "lh_AmygdalaFull.resid", "lh_Accumbens.areaFull.resid",
+  "rh_Thalamus.ProperFull.resid", "rh_CaudateFull.resid", "rh_PutamenFull.resid", "rh_PallidumFull.resid",
+  "rh_HippocampusFull.resid", "rh_AmygdalaFull.resid", "rh_Accumbens.areaFull.resid") %>% 
+  apply(1, cos.dist, y=OASIS.M.mu.SC)
+
+OASIS.M$SA.cos <- filter(OASIS.unit.SA, sex.coded ==1) %>% select(starts_with("SA")) %>% apply(1, cos.dist, y=OASIS.M.mu.SA)
+OASIS.M$CT.cos <- filter(OASIS.unit.CT, sex.coded ==1) %>% select(starts_with("CT")) %>% apply(1, cos.dist, y=OASIS.M.mu.CT)
+
+
+OASIS.F$Total.cos <- filter(OASIS.unit, sex.coded ==2) %>% select(1:(length(.)-4)) %>% apply(1, cos.dist, y=OASIS.F.mu)
+OASIS.F$Global.cos <- filter(OASIS.unit.global, sex.coded ==2) %>% 
+  select("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid") %>%
+  apply(1, cos.dist, y=OASIS.F.mu.global)
+
+OASIS.F$SC.cos <-filter(OASIS.unit.SC, sex.coded ==2) %>% 
+  select("lh_Thalamus.ProperFull.resid", "lh_CaudateFull.resid", "lh_PutamenFull.resid", "lh_PallidumFull.resid",
+  "lh_HippocampusFull.resid", "lh_AmygdalaFull.resid", "lh_Accumbens.areaFull.resid",
+  "rh_Thalamus.ProperFull.resid", "rh_CaudateFull.resid", "rh_PutamenFull.resid", "rh_PallidumFull.resid",
+  "rh_HippocampusFull.resid", "rh_AmygdalaFull.resid", "rh_Accumbens.areaFull.resid") %>% 
+  apply(1, cos.dist, y=OASIS.F.mu.SC)
+
+OASIS.F$SA.cos <- filter(OASIS.unit.SA, sex.coded ==2) %>% select(starts_with("SA")) %>% apply(1, cos.dist, y=OASIS.F.mu.SA)
+OASIS.F$CT.cos <- filter(OASIS.unit.CT, sex.coded ==2) %>% select(starts_with("CT")) %>% apply(1, cos.dist, y=OASIS.F.mu.CT)
+
+
+OASIS.cos <- rbind(OASIS.M, OASIS.F)
+
+#get stats from each dataset
+# df.ls <- c("PNC.cos", "HCP.cos", "OASIS.cos", "ADNI.cos")
+df.ls.cos <- c("PNC.cos", "HCP.cos", "OASIS.cos")
+Total.cos  <- lapply(df.ls.cos, function(i){
+  t.test(Total.cos ~ Sex , data=get(i))
+})
+num=length(Total.cos)
+Totalstats.cos <- extractT(Total.cos, num)
+
+Global.cos  <- lapply(df.ls.cos, function(i){
+  t.test(Global.cos ~ Sex , data=get(i))
+})
+Globalstats.cos <- extractT(Global.cos, num)
+
+SC.cos  <- lapply(df.ls.cos, function(i){
+  t.test(SC.cos ~ Sex , data=get(i))
+})
+SCstats.cos <- extractT(SC.cos, num)
+
+SA.cos  <- lapply(df.ls.cos, function(i){
+  t.test(SA.cos ~ Sex , data=get(i))
+})
+SAstats.cos <- extractT(SA.cos, num)
+
+CT.cos  <- lapply(df.ls.cos, function(i){
+  t.test(CT.cos ~ Sex , data=get(i))
+})
+CTstats.cos <- extractT(CT.cos, num)
+
+names(Totalstats.cos) <- paste0('Tot_',names(Totalstats.cos))
+names(Globalstats.cos) <- paste0('Glo_',names(Globalstats.cos))
+names(SCstats.cos) <- paste0('SC_',names(SCstats.cos))
+names(SAstats.cos) <- paste0('SA_',names(SAstats.cos))
+names(CTstats.cos) <- paste0('CT_',names(CTstats.cos))
+
+stats.cos <- cbind(Totalstats.cos, Globalstats.cos, SCstats.cos, SAstats.cos, CTstats.cos)
+
+stats.cos <- apply(stats.cos,2,as.character)
+rownames(stats.cos) <- df.ls.cos
+cos.out.file <- paste(outdir, "cos_stats.csv", sep="/")
+write.csv(stats.cos, file=cos.out.file, row.names = T)
+print(stats.cos)
+```
+
+
+# Mises-Fisher   
+```{r}
+########### HCP ################
+## check data fits the mises-fisher distribution
+
+
+# Code sex as 1=male, 2=female and apply Mises-Fisher clustering with given class (sex) 
+
+#total
+HCP.Mises <- movMF(as.matrix(HCP.unit[c(1:(length(HCP.unit)-4))]), k=2, ids=HCP.unit$sex.coded)
+#calculate kappa (distribution) and mu (mean direction) 
+HCP.kappa <-  sqrt(rowSums(HCP.Mises$theta^2))
+HCP.mu <- HCP.Mises$theta/HCP.kappa
+
+#global
+HCP.Mises.global <- movMF(as.matrix(HCP.unit.global[c(1:(length(HCP.unit.global)-4))]), k=2, ids=HCP.unit.global$sex.coded)
+#calculate kappa (distribution) and mu (mean direction) 
+HCP.kappa.global <-  sqrt(rowSums(HCP.Mises.global$theta^2))
+HCP.mu.global <- HCP.Mises.global$theta/HCP.kappa.global
+
+#sub cortical
+HCP.Mises.SC <- movMF(as.matrix(HCP.unit.SC[c(1:(length(HCP.unit.SC)-4))]), k=2, ids=HCP.unit.SC$sex.coded)
+#calculate kappa (distribution) and mu (mean direction) 
+HCP.kappa.SC <-  sqrt(rowSums(HCP.Mises.SC$theta^2))
+HCP.mu.SC <- HCP.Mises.SC$theta/HCP.kappa.SC
+
+#SA
+HCP.Mises.SA <- movMF(as.matrix(HCP.unit.SA[c(1:(length(HCP.unit.SA)-4))]), k=2, ids=HCP.unit.SA$sex.coded)
+#calculate kappa (distribution) and mu (mean direction) 
+HCP.kappa.SA <-  sqrt(rowSums(HCP.Mises.SA$theta^2))
+HCP.mu.SA <- HCP.Mises.SA$theta/HCP.kappa.SA
+
+#CT
+HCP.Mises.CT <- movMF(as.matrix(HCP.unit.CT[c(1:(length(HCP.unit.CT)-4))]), k=2, ids=HCP.unit.CT$sex.coded)
+#calculate kappa (distribution) and mu (mean direction) 
+HCP.kappa.CT <-  sqrt(rowSums(HCP.Mises.CT$theta^2))
+HCP.mu.CT <- HCP.Mises.CT$theta/HCP.kappa.CT
+
+#merge
+HCPstats <- t(cbind(HCP.kappa, HCP.kappa.global, HCP.kappa.SC, HCP.kappa.SA, HCP.kappa.CT))
+colnames(HCPstats) <- c("HCP.males", "HCP.females")
+HCPstats
+######## CT RESULTS MAKE NO SENSE ############## CHECK THIS ##################
+
+
+########### PNC ################
+## check normality of data
+
+
+
+
+# Code sex as 1=male, 2=female and apply Mises-Fisher clustering with given class (sex) 
+
+PNC.Mises <- movMF(as.matrix(PNC.unit[c(1:(length(PNC.unit)-4))]), k=2, ids=PNC.unit$sex.coded)
+#calculate kappa (distribution) and mu (mean direction) 
+PNC.kappa <-  sqrt(rowSums(PNC.Mises$theta^2))
+PNC.mu <- PNC.Mises$theta/PNC.kappa
+
+#global
+PNC.Mises.global <- movMF(as.matrix(PNC.unit.global[c(1:(length(PNC.unit.global)-4))]), k=2, ids=PNC.unit.global$sex.coded)
+#calculate kappa (distribution) and mu (mean direction) 
+PNC.kappa.global <-  sqrt(rowSums(PNC.Mises.global$theta^2))
+PNC.mu.global <- PNC.Mises.global$theta/PNC.kappa.global
+
+#sub cortical
+PNC.Mises.SC <- movMF(as.matrix(PNC.unit.SC[c(1:(length(PNC.unit.SC)-4))]), k=2, ids=PNC.unit.SC$sex.coded)
+#calculate kappa (distribution) and mu (mean direction) 
+PNC.kappa.SC <-  sqrt(rowSums(PNC.Mises.SC$theta^2))
+PNC.mu.SC <- PNC.Mises.SC$theta/PNC.kappa.SC
+
+#SA
+PNC.Mises.SA <- movMF(as.matrix(PNC.unit.SA[c(1:(length(PNC.unit.SA)-4))]), k=2, ids=PNC.unit.SA$sex.coded)
+#calculate kappa (distribution) and mu (mean direction) 
+PNC.kappa.SA <-  sqrt(rowSums(PNC.Mises.SA$theta^2))
+PNC.mu.SA <- PNC.Mises.SA$theta/PNC.kappa.SA
+
+#CT
+PNC.Mises.CT <- movMF(as.matrix(PNC.unit.CT[c(1:(length(PNC.unit.CT)-4))]), k=2, ids=PNC.unit.CT$sex.coded)
+#calculate kappa (distribution) and mu (mean direction) 
+PNC.kappa.CT <-  sqrt(rowSums(PNC.Mises.CT$theta^2))
+PNC.mu.CT <- PNC.Mises.CT$theta/PNC.kappa.CT
+
+#merge
+PNCstats <- t(cbind(PNC.kappa, PNC.kappa.global, PNC.kappa.SC, PNC.kappa.SA, PNC.kappa.CT))
+colnames(PNCstats) <- c("PNC.males", "PNC.females")
+PNCstats
+
+
+
+########### ADNI ################
+## check normality of data
+
+
+
+
+#total
+ADNI.Mises <- movMF(as.matrix(ADNI.unit[c(1:(length(ADNI.unit)-4))]), k=2, ids=ADNI.unit$sex.coded)
+#calculate kappa (distribution) and mu (mean direction) 
+ADNI.kappa <-  sqrt(rowSums(ADNI.Mises$theta^2))
+ADNI.mu <- ADNI.Mises$theta/ADNI.kappa
+
+#global
+ADNI.Mises.global <- movMF(as.matrix(ADNI.unit.global[c(1:(length(ADNI.unit.global)-4))]), k=2, ids=ADNI.unit.global$sex.coded)
+#calculate kappa (distribution) and mu (mean direction) 
+ADNI.kappa.global <-  sqrt(rowSums(ADNI.Mises.global$theta^2))
+ADNI.mu.global <- ADNI.Mises.global$theta/ADNI.kappa.global
+
+#sub cortical
+ADNI.Mises.SC <- movMF(as.matrix(ADNI.unit.SC[c(1:(length(ADNI.unit.SC)-4))]), k=2, ids=ADNI.unit.SC$sex.coded)
+#calculate kappa (distribution) and mu (mean direction) 
+ADNI.kappa.SC <-  sqrt(rowSums(ADNI.Mises.SC$theta^2))
+ADNI.mu.SC <- ADNI.Mises.SC$theta/ADNI.kappa.SC
+
+#SA
+ADNI.Mises.SA <- movMF(as.matrix(ADNI.unit.SA[c(1:(length(ADNI.unit.SA)-4))]), k=2, ids=ADNI.unit.SA$sex.coded)
+#calculate kappa (distribution) and mu (mean direction) 
+ADNI.kappa.SA <-  sqrt(rowSums(ADNI.Mises.SA$theta^2))
+ADNI.mu.SA <- ADNI.Mises.SA$theta/ADNI.kappa.SA
+
+#CT
+ADNI.Mises.CT <- movMF(as.matrix(ADNI.unit.CT[c(1:(length(ADNI.unit.CT)-4))]), k=2, ids=ADNI.unit.CT$sex.coded)
+#calculate kappa (distribution) and mu (mean direction) 
+ADNI.kappa.CT <-  sqrt(rowSums(ADNI.Mises.CT$theta^2))
+ADNI.mu.CT <- ADNI.Mises.CT$theta/ADNI.kappa.CT
+
+#merge
+ADNIstats <- t(cbind(ADNI.kappa, ADNI.kappa.global, ADNI.kappa.SC, ADNI.kappa.SA, ADNI.kappa.CT))
+colnames(ADNIstats) <- c("ADNI.males", "ADNI.females")
+ADNIstats
+
+
+########### OASIS ################
+## check normality of data
+
+
+
+
+#total
+OASIS.Mises <- movMF(as.matrix(OASIS.unit[c(1:(length(OASIS.unit)-4))]), k=2, ids=OASIS.unit$sex.coded)
+#calculate kappa (distribution) and mu (mean direction) 
+OASIS.kappa <-  sqrt(rowSums(OASIS.Mises$theta^2))
+OASIS.mu <- OASIS.Mises$theta/OASIS.kappa
+
+#global
+OASIS.Mises.global <- movMF(as.matrix(OASIS.unit.global[c(1:(length(OASIS.unit.global)-4))]), k=2, ids=OASIS.unit.global$sex.coded)
+#calculate kappa (distribution) and mu (mean direction) 
+OASIS.kappa.global <-  sqrt(rowSums(OASIS.Mises.global$theta^2))
+OASIS.mu.global <- OASIS.Mises.global$theta/OASIS.kappa.global
+
+#sub cortical
+OASIS.Mises.SC <- movMF(as.matrix(OASIS.unit.SC[c(1:(length(OASIS.unit.SC)-4))]), k=2, ids=OASIS.unit.SC$sex.coded)
+#calculate kappa (distribution) and mu (mean direction) 
+OASIS.kappa.SC <-  sqrt(rowSums(OASIS.Mises.SC$theta^2))
+OASIS.mu.SC <- OASIS.Mises.SC$theta/OASIS.kappa.SC
+
+#SA
+OASIS.Mises.SA <- movMF(as.matrix(OASIS.unit.SA[c(1:(length(OASIS.unit.SA)-4))]), k=2, ids=OASIS.unit.SA$sex.coded)
+#calculate kappa (distribution) and mu (mean direction) 
+OASIS.kappa.SA <-  sqrt(rowSums(OASIS.Mises.SA$theta^2))
+OASIS.mu.SA <- OASIS.Mises.SA$theta/OASIS.kappa.SA
+
+#CT
+OASIS.Mises.CT <- movMF(as.matrix(OASIS.unit.CT[c(1:(length(OASIS.unit.CT)-4))]), k=2, ids=OASIS.unit.CT$sex.coded)
+#calculate kappa (distribution) and mu (mean direction) 
+OASIS.kappa.CT <-  sqrt(rowSums(OASIS.Mises.CT$theta^2))
+OASIS.mu.CT <- OASIS.Mises.CT$theta/OASIS.kappa.CT
+
+#merge
+OASISstats <- t(cbind(OASIS.kappa, OASIS.kappa.global, OASIS.kappa.SC, OASIS.kappa.SA, OASIS.kappa.CT))
+colnames(OASISstats) <- c("OASIS.males", "OASIS.females")
+OASISstats
+
+
+
+
+
+
+
+## merge and print out stats from all groups
+VonMisesStats <- cbind(PNCstats, HCPstats, OASISstats, ADNIstats)
+rownames(VonMisesStats) <- c("total", "global", "subcortical", "surface area", "cortical thickness")
+VonMisesStats
+#sample
+# HCP.unit <- apply(HCP.res[c(2:4)], 1, scalar1) %>% t() %>% cbind(HCP.res[c("Sex", "Age_in_Yrs", "Subject")]) 
+# HCP.unit$sex.coded <- NA
+# HCP.unit$sex.coded[HCP.unit$Sex=="Male"] <- 1
+# HCP.unit$sex.coded[HCP.unit$Sex=="Female"] <- 2
+# HCP.Mises <- movMF(as.matrix(HCP.unit[c(1:3)]), k=2, ids=HCP.unit$sex.coded, kappa = "Banerjee_et_al_2005")
+
+
+## testing!
+# mu_orig <- rbind(c(0.4216370, 0.7378648, 0.5270463))
+# 
+# kappa_orig <- c(4)
+# theta_orig <- kappa_orig * mu_orig
+# alpha_orig <- c(1)
+#  ## Generate a sample of size n = 50 from the von Mises-Fisher mixture ## with the above parameters.
+# set.seed(123)
+# data_sim <- rmovMF(1000, theta_orig, alpha_orig)
+#  ## Fit a von Mises-Fisher mixture with the "right" number of components, ## using 10 EM runs.
+# MFsim <- movMF(data_sim, 1, nruns = 20)
+# 
+# kappaMF <- sqrt(rowSums(MFsim$theta^2))
+# muMF <-MFsim$theta/kappaMF
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## graphing 
+```{r}
+# calculate the best separating features
+
+# plot the best vector
+
+#get example 3 variable unit vector
+HCP.unit3 <- HCP.res[c(2:4)] %>% rowwise() %>% scalar1()
+
+
+rgl.open()
+
+rgl.spheres()
+rgl.sphgrid()
+rgl.points(HCP.unit[c(1:3)], color=get_colors(HCP.unit$Sex))
+
+rgl.sphgrid()
+rgl.points(mu, color=c("black", "red"))
+
+rgl.bg(color="white")
+rgl.lines(c(0,1), c(0, 0), c(0, 0), color = "black")
+rgl.lines(c(0, 0), c(0,1), c(0, 0), color = "red")
+rgl.lines(c(0, 0), c(0, 0), c(0,1), color = "green")
+
+
+rgl.lines(c(min(HCP.res$Total_GMFull.resid), max(HCP.res$Total_GMFull.resid)), c(0, 0), c(0, 0), color = "black")
+rgl.lines(c(0, 0), c(min(HCP.res$Cerebellum_CortFull.resid),max(HCP.res$Cerebellum_CortFull.resid)), c(0, 0), color = "red")
+rgl.lines(c(0, 0), c(0, 0), c(min(HCP.res$Tot_WMFull.resid),max(HCP.res$Tot_WMFull.resid)), color = "green")
+
+rgl.close()
+```
+

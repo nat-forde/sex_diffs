@@ -1,0 +1,1393 @@
+---
+title: "Mahalanobis"
+author: "nforde"
+date: "March 12, 2019"
+output: html_document
+---
+
+## get libraries/set paths
+```{r}
+library(tidyverse)
+library(broom)
+library(knitr)
+library(car)
+library(cowplot)
+library(lme4)
+library(ggseg)
+library(gridExtra)
+library(reshape2)
+library(ggbiplot)
+library(MASS)
+library(mosaic)
+library(MatchIt)
+
+
+## set all the paths
+#HCP
+HCP.res <- read.csv("/projects/nforde/HCP/stats/HCP/AllresAgeIN.csv")
+PNC.res <- read.csv("/projects/nforde/HCP/stats/PNC/AllresAgeIN.csv")
+OASIS.res <- read.csv("/projects/nforde/HCP/stats/OASIS/AllresAgeIN.csv")
+
+HCP.norm <- HCP.res[c(2:length(HCP.res))]
+PNC.norm <- PNC.res[c(2:length(PNC.res))]
+OASIS.norm <- OASIS.res[c(2:length(OASIS.res))]
+
+names(HCP.norm)[names(HCP.norm) == 'Age_in_Yrs'] <- 'Age'
+names(PNC.norm)[names(PNC.norm) == 'age_at_cnb'] <- 'Age'
+
+outdir <- "/projects/nforde/HCP/stats/combined_figures"
+
+```
+## define functions
+```{r}
+
+unit1 <- function(x) {x / sqrt(sum(x^2))} #where x is the vector to normalise
+
+euc.dist <- function(x) {
+  y <- colMeans(x)
+  euc <- apply(x, 1, function(i) sqrt(sum((i - y) ^ 2)))
+  return(euc)
+}
+
+mah.dist <- function(x,cov){
+  mahsq <- mahalanobis(x, colMeans(x), cov, tol=1e-20)
+  mah <- sqrt(mahsq)
+  return(mah)
+}
+
+cos.dist <- function(x){
+  y <- cent(x, 200)
+  sim <- as.matrix(x) %*% y 
+  deg <- acos(sim) * 180/pi
+  return(deg) 
+}
+
+get_colors <- function(groups, group.col = palette()){
+  groups <- as.factor(groups)
+  ngrps <- length(levels(groups))
+  if(ngrps > length(group.col)) 
+    group.col <- rep(group.col, ngrps)
+  color <- group.col[as.numeric(groups)]
+  names(color) <- as.vector(groups)
+  return(color)
+}
+
+extract <- function(i, num){
+  F_age <- lapply((i), function(f) Anova(f)$"F value"[2])
+  F_sex <- lapply((i), function(f) Anova(f)$"F value"[1])
+  F_ageXsex <-lapply((i), function(f) Anova(f)$"F value"[3])
+  p_age <-lapply((i), function(f) Anova(f)$"Pr(>F)"[2])
+  p_sex <-lapply((i), function(f) Anova(f)$"Pr(>F)"[1])
+  p_ageXsex <-lapply((i), function(f) Anova(f)$"Pr(>F)"[3])
+  adjRsq <- sapply((i), function(f) summary(f)$adj.r.squared)
+  padj_age <- p.adjust(p_age, method="fdr", n=num)
+  padj_sex <- p.adjust(p_sex, method="fdr", n=num)
+  padj_ageXsex <- p.adjust(p_ageXsex, method="fdr", n=num)
+  
+  merged <- as.data.frame(cbind(F_age, padj_age, F_sex, padj_sex, F_ageXsex, p_ageXsex, adjRsq))
+  return(merged)
+}
+
+
+GeomSplitViolin <- ggproto("GeomSplitViolin", GeomViolin, draw_group = function(self, data, ..., draw_quantiles = NULL){
+  data <- transform(data, xminv = x - violinwidth * (x - xmin), xmaxv = x + violinwidth * (xmax - x))
+  grp <- data[1,'group']
+  newdata <- plyr::arrange(transform(data, x = if(grp%%2==1) xminv else xmaxv), if(grp%%2==1) y else -y)
+  newdata <- rbind(newdata[1, ], newdata, newdata[nrow(newdata), ], newdata[1, ])
+  newdata[c(1,nrow(newdata)-1,nrow(newdata)), 'x'] <- round(newdata[1, 'x']) 
+  if (length(draw_quantiles) > 0 & !scales::zero_range(range(data$y))) {
+    stopifnot(all(draw_quantiles >= 0), all(draw_quantiles <= 
+                                              1))
+    quantiles <- ggplot2:::create_quantile_segment_frame(data, draw_quantiles)
+    aesthetics <- data[rep(1, nrow(quantiles)), setdiff(names(data), c("x", "y")), drop = FALSE]
+    aesthetics$alpha <- rep(1, nrow(quantiles))
+    both <- cbind(quantiles, aesthetics)
+    quantile_grob <- GeomPath$draw_panel(both, ...)
+    ggplot2:::ggname("geom_split_violin", grid::grobTree(GeomPolygon$draw_panel(newdata, ...), quantile_grob))
+  }
+  else {
+    ggplot2:::ggname("geom_split_violin", GeomPolygon$draw_panel(newdata, ...))
+  }
+})
+
+geom_split_violin <- function (mapping = NULL, data = NULL, stat = "ydensity", position = "identity", ..., draw_quantiles = NULL, trim = TRUE, scale = "area", na.rm = FALSE, show.legend = NA, inherit.aes = TRUE) {
+  layer(data = data, mapping = mapping, stat = stat, geom = GeomSplitViolin, position = position, show.legend = show.legend, inherit.aes = inherit.aes, params = list(trim = trim, scale = scale, draw_quantiles = draw_quantiles, na.rm = na.rm, ...))
+}
+
+######### All the functions required for calculating the centroid 
+############ translation of Jerry's code ############### #    
+compute_reverse_givens <- function(a) {  #a is 2d vector
+    
+  # Define <a> to be a vector in 2 dimensional space. 
+  # Find the rotation matrix that aligns a to the axis z = [0,r] 
+  # Where r is the magnitude of <a>
+  # 
+  # This method is a slight variation (x_j = x_N instead of x_j = x_1) of
+  # N-dimensional Rotation Matrix Generation Algorithm
+  # (Zhelezov, O.I 2017)
+    
+  hyp <- sqrt(((a[1]^2) + (a[2]^2)))  # magnitude sqrt(sum(x^2)) or hypot from pracma package
+  if (hyp^2 > 0) { #greater than ignore floating pt error
+    s_k <- a[1]/hyp
+    c_k <- a[2]/hyp
+  } else {
+     s_k <- 1
+     c_k <- 0
+  }
+  return(matrix(c(c_k, s_k, -s_k, c_k), nrow=2))
+}	
+  
+  
+  
+#Reverse algorithm
+
+rotate_coords <- function(q) { #takes q (shitty estimate of centroid) and aligns to last axis and outputs transform
+  N <- length(q)
+  G <- diag(N) #identity matrix
+  x_bar <- q
+    for (k in 1:(N-1)){
+    
+      G_k <- diag(N)
+      G_k[k:(k+1),k:(k+1)] <- compute_reverse_givens(x_bar[k:(k+1)])
+    
+      x_bar <- G_k %*% x_bar
+      G <- G_k %*% G
+      #print(k)
+    }
+  return(G)
+}
+
+inverse_exponential <- function(q,p) {
+  # 
+  # Let <q> and <p> be two unit vectors.
+  # Where:
+  #     <q> should be aligned to the x_N axis
+  #     <p> is another vector that we want to map to the tangential hyperplane
+  # 
+  # The inverse exponential map takes a point <p> and finds the angular rotation component
+  # between <q> and the x_i component of <p>. This returns the x_i' component of l(p) in the
+  # tangential hyperplane. 
+  # 
+  
+  #Make output vector (we lose the d+1 component)
+  
+  l_p <- matrix(0, nrow = 1, ncol = (length(q)-1)) #array of Zeros 1 less than dim p
+  
+  #For each angular component on the sphere, find the corresponding euclidean component  
+  for (i in (1:(length(q)-1))) {
+    
+    #Compute the cosine angle in radians
+    r <- acos((t(q)%*%t(t(p)))) #
+    
+    #Project into the tangent hyperplane to get the x_i' component
+    l_p[i] <- p[i] * (r/sin(r))
+  }  
+  return(l_p)
+}
+
+exponential_map <- function(q,p) {
+
+  # Let <q> and <p> be two vectors lying in a hyperplane. 
+  # Where:
+  #     <q> is a vector in euclidean space lying on an n-sphere
+  #     <p> is some vector lying on a hyperplane that is tangential to the n-sphere at <q>
+  # 
+  # The exponential map takes a point <p> on the hyperplane and computes a point on the n-sphere
+  # that preserves euclidean distances in the form of angular distances between <q> and <p>. 
+
+  #Make output vector (has n dimensions)
+  exp_p <- array(rep(0, length(q)))
+  
+  #Compute the total distance of p from q in the tangential hyperplane
+  r <- sqrt(sum(p^2))
+  
+  #Calculate the multiplier sin(r)/r. 
+  #This if condition is mentioned in the spherical means paper pg. 11 at the bottom
+  if (r>0) {
+      m <- sin(r)/r
+  } else {
+    m <- 1
+  }
+  for (i in 1:(length(q))) {
+    exp_p[i] <- p[i] * m
+  }
+  #Compute the last component
+  exp_p[(length(q))] <- cos(r)
+  
+  return(exp_p)
+}
+
+
+cent <- function(x, max.iter) {
+  
+  #def shitty mean as initial centroid
+  q <- colMeans(x) %>% unit1() 
+  
+  for (m in 1:max.iter) {
+  
+    #get transform of q to hyperplane origin (0,0....1)
+    Gxform <- rotate_coords(q)
+    
+    #apply rotation to all data points
+    qrot <- Gxform %*% q
+    xrot <- Gxform %*% t(x) 
+    
+    p_est <- matrix(NA, nrow = ncol(xrot), ncol = (length(qrot)-1))
+    for (i in 1:ncol(xrot)) { 
+      #calculate angular distance for each point to q on hyperplane
+      p_est[i,] <- inverse_exponential(qrot,xrot[,i]) 
+    }
+  
+    u <- (colSums(p_est - qrot[1:(length(qrot)-1)])) / (ncol(xrot))
+    qrot_updated <- qrot[1:(length(qrot)-1)] + u
+    qrot_new <- exponential_map(qrot, qrot_updated)
+    Gxform_inv <- ginv(Gxform)
+    q <- Gxform_inv %*% qrot_new
+  
+    if (sqrt(sum(u^2)) <0.00001) {   # If ||u|| is sufficiently small, output q and halt, otherwise continue looping.
+      break
+    }
+  }
+  return(q)
+}
+
+
+
+```
+# Mahalanobis
+```{r}
+#some list of variable names to keep things easier later
+HCP.SC <- c("L_ThalamusProperageIn.resid", "L_CaudateageIn.resid", "L_PutamenageIn.resid", "L_PallidumageIn.resid",
+            "L_HippoageIn.resid", "L_AmygdalaageIn.resid", "L_AccumbensAreaageIn.resid", "R_ThalamusProperageIn.resid",
+            "R_CaudateageIn.resid", "R_PutamenageIn.resid", "R_PallidumageIn.resid", "R_HippoageIn.resid",
+            "R_AmygdalaageIn.resid", "R_AccumbensAreaageIn.resid")
+
+PNC.SC <- c("Left.Thalamus.ProperageIn.resid", "Left.CaudateageIn.resid", "Left.PutamenageIn.resid",
+            "Left.PallidumageIn.resid", "Left.HippocampusageIn.resid", "Left.AmygdalaageIn.resid",
+            "Left.Accumbens.areaageIn.resid", "Right.Thalamus.ProperageIn.resid", "Right.CaudateageIn.resid",
+            "Right.PutamenageIn.resid", "Right.PallidumageIn.resid", "Right.HippocampusageIn.resid",
+            "Right.AmygdalaageIn.resid", "Right.Accumbens.areaageIn.resid")
+
+OASIS.SC <- c("lh_Thalamus.ProperageIn.resid", "lh_CaudateageIn.resid", "lh_PutamenageIn.resid", "lh_PallidumageIn.resid",
+                                "lh_HippocampusageIn.resid", "lh_AmygdalaageIn.resid", "lh_Accumbens.areaageIn.resid",
+                               "rh_Thalamus.ProperageIn.resid", "rh_CaudateageIn.resid", "rh_PutamenageIn.resid",
+           "rh_PallidumageIn.resid", "rh_HippocampusageIn.resid", "rh_AmygdalaageIn.resid", "rh_Accumbens.areaageIn.resid")
+
+HCP.glo <- c("Total_GMageIn.resid", "Tot_WMageIn.resid", "Cerebellum_CortageIn.resid", "Cerebellum_WMageIn.resid")
+PNC.glo <- c("TotalGrayageIn.resid", "CorticalWhiteMatterageIn.resid", "Cerebellum_CortageIn.resid",
+                                   "Cerebellum_WMageIn.resid")
+OASIS.glo <- c("TotalGrayageIn.resid", "CorticalWhiteMatterageIn.resid", "Cerebellum_CortageIn.resid",
+                                   "Cerebellum_WMageIn.resid")
+
+
+#divide by sex
+HCP.M <- subset(HCP.norm, Sex =="Male")
+HCP.F <- subset(HCP.norm, Sex =="Female")
+
+PNC.M <- subset(PNC.norm, Sex=="M")
+PNC.F <- subset(PNC.norm, Sex=="F")
+
+OASIS.M <- subset(OASIS.norm, Sex =="M")
+OASIS.F <- subset(OASIS.norm, Sex =="F")
+
+#calculate covariance matrices on full sample
+HCP.tot.cov <- cov(HCP.norm[c(1:(length(HCP.norm)-3))])
+HCP.glo.cov <- cov(HCP.norm[HCP.glo])
+HCP.SC.cov <- cov(HCP.norm[HCP.SC])
+HCP.SA.cov <- cov(dplyr::select(HCP.norm, starts_with("SA")))
+HCP.CT.cov <- cov(dplyr::select(HCP.norm, starts_with("SA")))
+
+#calculate distance
+HCP.M$mah.tot <- mah.dist(HCP.M[c(1:(length(HCP.M)-3))], HCP.tot.cov)
+HCP.M$mah.glo <- mah.dist(HCP.M[HCP.glo], HCP.glo.cov)
+HCP.M$mah.SC <- mah.dist(HCP.M[HCP.SC], HCP.SC.cov)
+HCP.M$mah.SA <- mah.dist(dplyr::select(HCP.M, starts_with("SA")), HCP.SA.cov)
+HCP.M$mah.CT <- mah.dist(dplyr::select(HCP.M, starts_with("CT")), HCP.CT.cov)
+
+HCP.F$mah.tot <- mah.dist(HCP.F[c(1:(length(HCP.F)-3))], HCP.tot.cov) 
+HCP.F$mah.glo <- mah.dist(HCP.F[HCP.glo], HCP.glo.cov)
+HCP.F$mah.SC <- mah.dist(HCP.F[HCP.SC], HCP.SC.cov)
+HCP.F$mah.SA <- mah.dist(dplyr::select(HCP.F, starts_with("SA")), HCP.SA.cov)
+HCP.F$mah.CT <- mah.dist(dplyr::select(HCP.F, starts_with("CT")), HCP.CT.cov)
+
+HCP.mah <- rbind(HCP.M, HCP.F)
+
+##PNC
+#calculate covariance matrices on full sample
+PNC.tot.cov <- cov(PNC.norm[c(1:(length(PNC.norm)-3))])
+PNC.glo.cov <- cov(PNC.norm[PNC.glo])
+PNC.SC.cov <- cov(PNC.norm[PNC.SC])
+PNC.SA.cov <- cov(dplyr::select(PNC.norm, starts_with("SA")))
+PNC.CT.cov <- cov(dplyr::select(PNC.norm, starts_with("SA")))
+
+#calc distances
+PNC.M$mah.tot <- mah.dist(PNC.M[c(1:(length(PNC.M)-3))], PNC.tot.cov) 
+PNC.M$mah.glo <- mah.dist(PNC.M[PNC.glo], PNC.glo.cov)
+PNC.M$mah.SC <- mah.dist(PNC.M[PNC.SC], PNC.SC.cov)
+PNC.M$mah.SA <- mah.dist(dplyr::select(PNC.M, starts_with("SA")), PNC.SA.cov)
+PNC.M$mah.CT <- mah.dist(dplyr::select(PNC.M, starts_with("CT")), PNC.CT.cov)
+
+PNC.F$mah.tot <- mah.dist(PNC.F[c(1:(length(PNC.F)-3))], PNC.tot.cov) 
+PNC.F$mah.glo <- mah.dist(PNC.F[PNC.glo], PNC.glo.cov)
+PNC.F$mah.SC <- mah.dist(PNC.F[PNC.SC], PNC.SC.cov)
+PNC.F$mah.SA <- mah.dist(dplyr::select(PNC.F, starts_with("SA")), PNC.SA.cov)
+PNC.F$mah.CT <- mah.dist(dplyr::select(PNC.F, starts_with("CT")), PNC.CT.cov)
+
+PNC.mah <- rbind(PNC.M, PNC.F)
+
+#OASIS
+#calculate covariance matrices on full sample
+OASIS.tot.cov <- cov(OASIS.norm[c(1:(length(OASIS.norm)-3))])
+OASIS.glo.cov <- cov(OASIS.norm[OASIS.glo])
+OASIS.SC.cov <- cov(OASIS.norm[OASIS.SC])
+OASIS.SA.cov <- cov(dplyr::select(OASIS.norm, starts_with("SA")))
+OASIS.CT.cov <- cov(dplyr::select(OASIS.norm, starts_with("SA")))
+
+#calculate distance
+OASIS.M$mah.tot <- mah.dist(OASIS.M[c(1:(length(OASIS.M)-3))], OASIS.tot.cov) 
+OASIS.M$mah.glo <- mah.dist(OASIS.M[OASIS.glo], OASIS.glo.cov)
+OASIS.M$mah.SC <- mah.dist(OASIS.M[OASIS.SC], OASIS.SC.cov)
+OASIS.M$mah.SA <- mah.dist(dplyr::select(OASIS.M, starts_with("SA")), OASIS.SA.cov)
+OASIS.M$mah.CT <- mah.dist(dplyr::select(OASIS.M, starts_with("CT")), OASIS.CT.cov)
+
+OASIS.F$mah.tot <- mah.dist(OASIS.F[c(1:(length(OASIS.F)-3))], OASIS.tot.cov) 
+OASIS.F$mah.glo <- mah.dist(OASIS.F[OASIS.glo], OASIS.glo.cov)
+OASIS.F$mah.SC <- mah.dist(OASIS.F[OASIS.SC], OASIS.SC.cov)
+OASIS.F$mah.SA <- mah.dist(dplyr::select(OASIS.F, starts_with("SA")), OASIS.SA.cov)
+OASIS.F$mah.CT <- mah.dist(dplyr::select(OASIS.F, starts_with("CT")), OASIS.CT.cov)
+
+OASIS.mah <- rbind(OASIS.M, OASIS.F)
+
+#get stats from each dataset
+mah.ls <- c("PNC.mah", "HCP.mah", "OASIS.mah")
+mah.tot  <- lapply(mah.ls, function(i){
+  lm(mah.tot ~ Sex*Age , data=get(i))
+})
+#num=length(Total)
+num=4
+Totalstats.mah <- extract(mah.tot, num)
+
+mah.glo  <- lapply(mah.ls, function(i){
+  lm(mah.glo ~ Sex*Age , data=get(i))
+})
+Globalstats.mah <- extract(mah.glo, num)
+
+mah.SC  <- lapply(mah.ls, function(i){
+  lm(mah.SC ~ Sex*Age, data=get(i))
+})
+SCstats.mah <- extract(mah.SC, num)
+
+mah.SA  <- lapply(mah.ls, function(i){
+  lm(mah.SA ~ Sex*Age , data=get(i))
+})
+SAstats.mah <- extract(mah.SA, num)
+
+mah.CT  <- lapply(mah.ls, function(i){
+  lm(mah.CT ~ Sex*Age , data=get(i))
+})
+CTstats.mah <- extract(mah.CT, num)
+
+names(Totalstats.mah) <- paste0('Tot_',names(Totalstats.mah))
+names(Globalstats.mah) <- paste0('Glo_',names(Globalstats.mah))
+names(SCstats.mah) <- paste0('SC_',names(SCstats.mah))
+names(SAstats.mah) <- paste0('SA_',names(SAstats.mah))
+names(CTstats.mah) <- paste0('CT_',names(CTstats.mah))
+
+stats.mah <- cbind(Totalstats.mah, Globalstats.mah, SCstats.mah, SAstats.mah, CTstats.mah)
+
+stats.mah <- apply(stats.mah,2,as.character)
+rownames(stats.mah) <- mah.ls
+Mah.out.file <- paste(outdir, "Mah_statsAgeIn.csv", sep="/")
+write.csv(stats.mah, file=Mah.out.file, row.names = T)
+print(stats.mah)
+
+```
+#Plotting Mahalanobis distance
+```{r}
+
+HCP.plt.gl <- ggplot(HCP.mah, aes(x=Age, colour= Sex, y=mah.glo)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,6) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+PNC.plt.gl <- ggplot(PNC.mah, aes(x=Age, colour= Sex, y=mah.glo)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,6) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+OASIS.plt.gl <- ggplot(OASIS.mah, aes(x=Age, colour= Sex, y=mah.glo)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,6) + geom_smooth(span = 0.5) +xlab("Age (years)")
+#SC
+HCP.plt.sc <- ggplot(HCP.mah, aes(x=Age, colour= Sex, y=mah.SC)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,7.5) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+PNC.plt.sc <- ggplot(PNC.mah, aes(x=Age, colour= Sex, y=mah.SC)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,7.5) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+OASIS.plt.sc <- ggplot(OASIS.mah, aes(x=Age, colour= Sex, y=mah.SC)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,7.5) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+#SA
+HCP.plt.sa <- ggplot(HCP.mah, aes(x=Age, colour= Sex, y=mah.SA)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,20) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+PNC.plt.sa <- ggplot(PNC.mah, aes(x=Age, colour= Sex, y=mah.SA)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,20) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+OASIS.plt.sa <- ggplot(OASIS.mah, aes(x=Age, colour= Sex, y=mah.SA)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,20) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+#CT
+HCP.plt.ct <- ggplot(HCP.mah, aes(x=Age, colour= Sex, y=mah.CT)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,20) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+PNC.plt.ct <- ggplot(PNC.mah, aes(x=Age, colour= Sex, y=mah.CT)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,20) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+OASIS.plt.ct <- ggplot(OASIS.mah, aes(x=Age, colour= Sex, y=mah.CT)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,20) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+plot_grid(PNC.plt.gl, HCP.plt.gl, OASIS.plt.gl, PNC.plt.sc, HCP.plt.sc, OASIS.plt.sc, PNC.plt.sa, HCP.plt.sa, OASIS.plt.sa, 
+          PNC.plt.ct, HCP.plt.ct, OASIS.plt.ct, align="hv", ncol = 3)
+
+mah.plt <- plot_grid(PNC.plt.gl, HCP.plt.gl, OASIS.plt.gl, PNC.plt.sc, HCP.plt.sc, OASIS.plt.sc, PNC.plt.sa, HCP.plt.sa, OASIS.plt.sa, 
+          PNC.plt.ct, HCP.plt.ct, OASIS.plt.ct, align="hv", ncol = 3)
+
+mah.plt.file <- paste(outdir, "Comb_Mahalanobis_Age.png", sep="/")
+ggsave(mah.plt.file, mah.plt, dpi=300, width = 21, height = 20, units = "cm") #####
+
+
+```
+#cosine
+```{r}
+# centroid changes with age. Need to bin by age and calculate cosine angle to centroid within age bin
+
+#match samples and run whole samples
+library(MatchIt)
+
+PNC.norm$treat <- ifelse(PNC.norm$Sex == "M", 1, 0)
+PNC.mat <- matchit(treat ~ Age, data=PNC.norm)
+PNC.norm.mat <- match.data(PNC.mat)
+
+HCP.norm$treat <- ifelse(HCP.norm$Sex == "Male", 1, 0)
+HCP.mat <- matchit(treat ~ Age, data=HCP.norm)
+HCP.norm.mat <- match.data(HCP.mat)
+
+OASIS.norm$treat <- ifelse(OASIS.norm$Sex == "M", 1, 0)
+OASIS.mat <- matchit(treat ~ Age, data=OASIS.norm)
+OASIS.norm.mat <- match.data(OASIS.mat)
+
+########### UN MATCHED #####################
+# #make unit vectors
+# #HCP
+# HCP.unit <- apply(HCP.norm[c(1:(length(HCP.norm)-3))], 1, unit1) %>% t() %>% cbind(HCP.norm[c("Age", "Subject", "Sex")])
+# HCP.unit.global <- apply(HCP.norm[HCP.glo], 1, unit1) %>% t() %>% cbind(HCP.norm[c("Age", "Subject", "Sex")])
+# HCP.unit.SC <- apply(HCP.norm[HCP.SC], 1, unit1) %>% t() %>% cbind(HCP.norm[c("Age", "Subject", "Sex")])
+# HCP.unit.SA <- apply(dplyr::select(HCP.norm, starts_with("SA")), 1, unit1) %>% t() %>% cbind(HCP.norm[c("Age", "Subject", "Sex")])
+# HCP.unit.CT <- apply(dplyr::select(HCP.norm, starts_with("CT")), 1, unit1) %>% t() %>% cbind(HCP.norm[c("Age", "Subject", "Sex")])
+# 
+# ## PNC
+# PNC.unit <- apply(PNC.norm[c(1:(length(PNC.norm)-3))], 1, unit1) %>% t() %>% cbind(PNC.norm[c("Age", "ID", "Sex")])
+# PNC.unit.global <- apply(PNC.norm[PNC.glo], 1, unit1) %>% t() %>% cbind(PNC.norm[c("Age", "ID", "Sex")])
+# PNC.unit.SC <- apply(PNC.norm[PNC.SC], 1, unit1) %>%  t() %>% cbind(PNC.norm[c("Age", "ID", "Sex")])
+# PNC.unit.SA <- apply(dplyr::select(PNC.norm, starts_with("SA")), 1, unit1) %>% t() %>% cbind(PNC.norm[c("Age", "ID", "Sex")])
+# PNC.unit.CT <- apply(dplyr::select(PNC.norm, starts_with("CT")), 1, unit1) %>% t() %>% cbind(PNC.norm[c("Age", "ID", "Sex")])
+# 
+# ## OASIS
+# OASIS.unit <- apply(OASIS.norm[c(1:(length(OASIS.norm)-3))], 1, unit1) %>% t() %>% cbind(OASIS.norm[c("Age", "Subject", "Sex")])
+# OASIS.unit.global <- apply(OASIS.norm[OASIS.glo], 1, unit1) %>% t() %>% cbind(OASIS.norm[c("Age", "Subject", "Sex")])
+# OASIS.unit.SC <- apply(OASIS.norm[OASIS.SC], 1, unit1) %>%  t() %>% cbind(OASIS.norm[c("Age", "Subject", "Sex")])
+# OASIS.unit.SA <- apply(dplyr::select(OASIS.norm, starts_with("SA")), 1, unit1) %>% t() %>% cbind(OASIS.norm[c("Age", "Subject", "Sex")])
+# OASIS.unit.CT <- apply(dplyr::select(OASIS.norm, starts_with("CT")), 1, unit1) %>% t() %>% cbind(OASIS.norm[c("Age", "Subject", "Sex")])
+
+######### MATCHED ###########
+#make unit vectors
+#HCP
+HCP.unit <- apply(HCP.norm.mat[c(1:(length(HCP.norm.mat)-6))], 1, unit1) %>% t() %>% cbind(HCP.norm.mat[c("Age", "Subject", "Sex")])
+HCP.unit.global <- apply(HCP.norm.mat[HCP.glo], 1, unit1) %>% t() %>% cbind(HCP.norm.mat[c("Age", "Subject", "Sex")])
+HCP.unit.SC <- apply(HCP.norm.mat[HCP.SC], 1, unit1) %>% t() %>% cbind(HCP.norm.mat[c("Age", "Subject", "Sex")])
+HCP.unit.SA <- apply(dplyr::select(HCP.norm.mat, starts_with("SA")), 1, unit1) %>% t() %>% cbind(HCP.norm.mat[c("Age", "Subject", "Sex")])
+HCP.unit.CT <- apply(dplyr::select(HCP.norm.mat, starts_with("CT")), 1, unit1) %>% t() %>% cbind(HCP.norm.mat[c("Age", "Subject", "Sex")])
+
+## PNC
+PNC.unit <- apply(PNC.norm.mat[c(1:(length(PNC.norm.mat)-6))], 1, unit1) %>% t() %>% cbind(PNC.norm.mat[c("Age", "ID", "Sex")])
+PNC.unit.global <- apply(PNC.norm.mat[PNC.glo], 1, unit1) %>% t() %>% cbind(PNC.norm.mat[c("Age", "ID", "Sex")])
+PNC.unit.SC <- apply(PNC.norm.mat[PNC.SC], 1, unit1) %>%  t() %>% cbind(PNC.norm.mat[c("Age", "ID", "Sex")])
+PNC.unit.SA <- apply(dplyr::select(PNC.norm.mat, starts_with("SA")), 1, unit1) %>% t() %>% cbind(PNC.norm.mat[c("Age", "ID", "Sex")])
+PNC.unit.CT <- apply(dplyr::select(PNC.norm.mat, starts_with("CT")), 1, unit1) %>% t() %>% cbind(PNC.norm.mat[c("Age", "ID", "Sex")])
+
+## OASIS
+OASIS.unit <- apply(OASIS.norm.mat[c(1:(length(OASIS.norm.mat)-6))], 1, unit1) %>% t() %>% cbind(OASIS.norm.mat[c("Age", "Subject", "Sex")])
+OASIS.unit.global <- apply(OASIS.norm.mat[OASIS.glo], 1, unit1) %>% t() %>% cbind(OASIS.norm.mat[c("Age", "Subject", "Sex")])
+OASIS.unit.SC <- apply(OASIS.norm.mat[OASIS.SC], 1, unit1) %>%  t() %>% cbind(OASIS.norm.mat[c("Age", "Subject", "Sex")])
+OASIS.unit.SA <- apply(dplyr::select(OASIS.norm.mat, starts_with("SA")), 1, unit1) %>% t() %>% cbind(OASIS.norm.mat[c("Age", "Subject", "Sex")])
+OASIS.unit.CT <- apply(dplyr::select(OASIS.norm.mat, starts_with("CT")), 1, unit1) %>% t() %>% cbind(OASIS.norm.mat[c("Age", "Subject", "Sex")])
+
+# have to do this again when groups are matched
+#divide by sex
+HCP.M <- subset(HCP.norm.mat, Sex =="Male")
+HCP.F <- subset(HCP.norm.mat, Sex =="Female")
+
+PNC.M <- subset(PNC.norm.mat, Sex=="M")
+PNC.F <- subset(PNC.norm.mat, Sex=="F")
+
+OASIS.M <- subset(OASIS.norm.mat, Sex =="M")
+OASIS.F <- subset(OASIS.norm.mat, Sex =="F")
+
+
+# HCP.M$Total.cos <- filter(HCP.unit, Sex =="Male") %>% select(1:(length(.)-3)) %>% cos.dist()
+HCP.M$Global.cos <- filter(HCP.unit.global, Sex=="Male") %>%
+  dplyr::select(HCP.glo) %>% cos.dist()
+
+HCP.M$SC.cos <- filter(HCP.unit.SC, Sex=="Male") %>%
+  dplyr::select(HCP.SC) %>%
+  cos.dist()
+
+HCP.M$SA.cos <- filter(HCP.unit.SA, Sex=="Male") %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist()
+HCP.M$CT.cos <- filter(HCP.unit.CT, Sex=="Male") %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist()
+
+# HCP.F$Total.cos <- filter(HCP.unit, Sex=="Female") %>% select(1:(length(.)-3)) %>% cos.dist()
+HCP.F$Global.cos <- filter(HCP.unit.global, Sex=="Female") %>%
+  dplyr::select(HCP.glo) %>%
+  cos.dist()
+
+HCP.F$SC.cos <- filter(HCP.unit.SC, Sex=="Female") %>%
+  dplyr::select(HCP.SC) %>%
+  cos.dist()
+
+HCP.F$SA.cos <- filter(HCP.unit.SA, Sex=="Female") %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist()
+HCP.F$CT.cos <- filter(HCP.unit.CT, Sex=="Female") %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist()
+
+HCP.cos <- rbind(HCP.M, HCP.F)
+
+##PNC
+# PNC.M$Total.cos <- filter(PNC.unit, Sex=="M") %>% select(1:(length(.)-3)) %>% cos.dist()
+PNC.M$Global.cos <- filter(PNC.unit.global, Sex=="M") %>%
+  dplyr::select(PNC.glo) %>%
+  cos.dist()
+
+PNC.M$SC.cos <- filter(PNC.unit.SC, Sex=="M") %>%
+  dplyr::select(PNC.SC) %>%
+  cos.dist()
+
+PNC.M$SA.cos <- filter(PNC.unit.SA, Sex=="M") %>% dplyr::select(starts_with("SA")) %>% cos.dist()
+PNC.M$CT.cos <- filter(PNC.unit.CT, Sex=="M") %>% dplyr::select(starts_with("CT")) %>% cos.dist()
+
+# PNC.F$Total.cos <- filter(PNC.unit, Sex=="F") %>% select(1:(length(.)-3)) %>% cos.dist()
+PNC.F$Global.cos <- filter(PNC.unit.global, Sex=="F") %>%
+  dplyr::select(PNC.glo) %>%
+  cos.dist()
+
+PNC.F$SC.cos <- filter(PNC.unit.SC, Sex=="F") %>%
+  dplyr::select(PNC.SC) %>%
+  cos.dist()
+
+PNC.F$SA.cos <- filter(PNC.unit.SA, Sex=="F") %>% dplyr::select(starts_with("SA")) %>% cos.dist()
+PNC.F$CT.cos <- filter(PNC.unit.CT, Sex=="F") %>% dplyr::select(starts_with("CT")) %>% cos.dist()
+
+PNC.cos <- rbind(PNC.M, PNC.F)
+
+
+#OASIS
+# OASIS.M$Total.cos <- filter(OASIS.unit, Sex=="M") %>% select(1:(length(.)-3)) %>% cos.dist()
+OASIS.M$Global.cos <- filter(OASIS.unit.global, Sex=="M") %>%
+  dplyr::select(OASIS.glo) %>%
+  cos.dist()
+
+OASIS.M$SC.cos <-filter(OASIS.unit.SC, Sex=="M") %>%
+  dplyr::select(OASIS.SC) %>%
+  cos.dist()
+
+OASIS.M$SA.cos <- filter(OASIS.unit.SA, Sex=="M") %>% dplyr::select(starts_with("SA")) %>% cos.dist()
+OASIS.M$CT.cos <- filter(OASIS.unit.CT, Sex=="M") %>% dplyr::select(starts_with("CT")) %>% cos.dist()
+
+# OASIS.F$Total.cos <- filter(OASIS.unit, Sex=="F") %>% select(1:(length(.)-3)) %>% cos.dist()
+OASIS.F$Global.cos <- filter(OASIS.unit.global, Sex=="F") %>%
+  dplyr::select(OASIS.glo) %>%
+  cos.dist()
+
+OASIS.F$SC.cos <-filter(OASIS.unit.SC, Sex=="F") %>%
+  dplyr::select(OASIS.SC) %>%
+  cos.dist()
+
+OASIS.F$SA.cos <- filter(OASIS.unit.SA, Sex=="F") %>% dplyr::select(starts_with("SA")) %>% cos.dist()
+OASIS.F$CT.cos <- filter(OASIS.unit.CT, Sex=="F") %>% dplyr::select(starts_with("CT")) %>% cos.dist()
+
+OASIS.cos <- rbind(OASIS.M, OASIS.F)
+
+#get stats from each dataset whole sample
+df.ls.cos <- c("PNC.cos", "HCP.cos", "OASIS.cos")
+# Total.cos  <- lapply(df.ls.cos, function(i){
+#   lm(Total.cos ~ Sex*Age , data=get(i))
+# })
+# num=length(Total.cos)
+# Totalstats.cos <- extract(Total.cos, num)
+
+Global.cos  <- lapply(df.ls.cos, function(i){
+  lm(Global.cos ~ Sex*Age , data=get(i))
+})
+num=length(Global.cos)
+Globalstats.cos <- extract(Global.cos, num)
+
+SC.cos  <- lapply(df.ls.cos, function(i){
+  lm(SC.cos ~ Sex*Age , data=get(i))
+})
+SCstats.cos <- extract(SC.cos, num)
+
+SA.cos  <- lapply(df.ls.cos, function(i){
+  lm(SA.cos ~ Sex*Age , data=get(i))
+})
+SAstats.cos <- extract(SA.cos, num)
+
+CT.cos  <- lapply(df.ls.cos, function(i){
+  lm(CT.cos ~ Sex*Age , data=get(i))
+})
+CTstats.cos <- extract(CT.cos, num)
+
+# names(Totalstats.cos) <- paste0('Tot_',names(Totalstats.cos))
+names(Globalstats.cos) <- paste0('Glo_',names(Globalstats.cos))
+names(SCstats.cos) <- paste0('SC_',names(SCstats.cos))
+names(SAstats.cos) <- paste0('SA_',names(SAstats.cos))
+names(CTstats.cos) <- paste0('CT_',names(CTstats.cos))
+
+stats.cos <- cbind(Globalstats.cos, SCstats.cos, SAstats.cos, CTstats.cos)
+
+stats.cos <- apply(stats.cos,2,as.character)
+rownames(stats.cos) <- df.ls.cos
+cos.out.file <- paste(outdir, "cos_statsAgeIN.csv", sep="/")
+write.csv(stats.cos, file=cos.out.file, row.names = T)
+print(stats.cos)
+
+
+######## BY AGE BIN
+
+##global
+#PNC
+Global.cosu10m <- filter(PNC.unit.global, Sex=="M", Age <10) %>%
+  dplyr::select(PNC.glo) %>%
+  cos.dist() %>% cbind("M", "<10")
+Global.cos1015m <- filter(PNC.unit.global, Sex=="M", Age >=10, Age <15) %>%
+  dplyr::select(PNC.glo) %>%
+  cos.dist() %>% cbind("M", "10-15")
+Global.cos1520m <- filter(PNC.unit.global, Sex=="M", Age >=15, Age <20) %>%
+  dplyr::select(PNC.glo) %>%
+  cos.dist() %>% cbind("M", "15-20")
+
+Global.cosu10f <- filter(PNC.unit.global, Sex=="F", Age <10) %>%
+  dplyr::select(PNC.glo) %>%
+  cos.dist() %>% cbind("F", "<10")
+Global.cos1015f <- filter(PNC.unit.global, Sex=="F", Age >=10, Age <15) %>%
+  dplyr::select(PNC.glo) %>%
+  cos.dist() %>% cbind("F", "10-15")
+Global.cos1520f <- filter(PNC.unit.global, Sex=="F", Age >=15, Age <20) %>%
+  dplyr::select(PNC.glo) %>%
+  cos.dist() %>% cbind("F", "15-20")
+
+#HCP
+Global.cosu25m <- filter(HCP.unit.global, Sex=="Male", Age <25) %>%
+  dplyr::select(HCP.glo) %>%
+  cos.dist() %>% cbind("M", "<25")
+Global.cos2530m <- filter(HCP.unit.global, Sex=="Male", Age >=25, Age <30) %>%
+  dplyr::select(HCP.glo) %>%
+  cos.dist() %>% cbind("M", "25-30")
+Global.cos3035m <- filter(HCP.unit.global, Sex=="Male", Age >=30, Age <35) %>%
+  dplyr::select(HCP.glo) %>%
+  cos.dist() %>% cbind("M", "30-35")
+
+Global.cosu25f <- filter(HCP.unit.global, Sex=="Female", Age <25) %>%
+  dplyr::select(HCP.glo) %>%
+  cos.dist() %>% cbind("F", "<25")
+Global.cos2530f <- filter(HCP.unit.global, Sex=="Female", Age >=25, Age <30) %>%
+  dplyr::select(HCP.glo) %>%
+  cos.dist() %>% cbind("F", "25-30")
+Global.cos3035f <- filter(HCP.unit.global, Sex=="Female", Age >=30, Age <35) %>%
+  dplyr::select(HCP.glo) %>%
+  cos.dist() %>% cbind("F", "30-35")
+
+#OASIS
+Global.cos5055m <- filter(OASIS.unit.global, Sex=="M", Age >=50, Age <55) %>%
+  dplyr::select(OASIS.glo) %>%
+  cos.dist() %>% cbind("M", "50-55")
+Global.cos5560m <- filter(OASIS.unit.global, Sex=="M", Age >=55, Age <60) %>%
+  dplyr::select(OASIS.glo) %>%
+  cos.dist() %>% cbind("M", "55-60")
+Global.cos6065m <- filter(OASIS.unit.global, Sex=="M", Age >=60, Age <65) %>%
+  dplyr::select(OASIS.glo) %>%
+  cos.dist() %>% cbind("M", "60-65")
+Global.cos6570m <- filter(OASIS.unit.global, Sex=="M", Age >=65, Age <70) %>%
+  dplyr::select(OASIS.glo) %>%
+  cos.dist() %>% cbind("M", "65-70")
+Global.cos7075m <- filter(OASIS.unit.global, Sex=="M", Age >=70, Age <75) %>%
+  dplyr::select(OASIS.glo) %>%
+  cos.dist() %>% cbind("M", "70-75")
+Global.cos7580m <- filter(OASIS.unit.global, Sex=="M", Age >=75, Age <80) %>%
+  dplyr::select(OASIS.glo) %>%
+  cos.dist() %>% cbind("M", "75-80")
+
+Global.cos5055f <- filter(OASIS.unit.global, Sex=="F", Age >=50, Age <55) %>%
+  dplyr::select(OASIS.glo) %>%
+  cos.dist() %>% cbind("F", "50-55")
+Global.cos5560f <- filter(OASIS.unit.global, Sex=="F", Age >=55, Age <60) %>%
+  dplyr::select(OASIS.glo) %>%
+  cos.dist() %>% cbind("F", "55-60")
+Global.cos6065f <- filter(OASIS.unit.global, Sex=="F", Age >=60, Age <65) %>%
+  dplyr::select(OASIS.glo) %>%
+  cos.dist() %>% cbind("F", "60-65")
+Global.cos6570f <- filter(OASIS.unit.global, Sex=="F", Age >=65, Age <70) %>%
+  dplyr::select(OASIS.glo) %>%
+  cos.dist() %>% cbind("F", "65-70")
+Global.cos7075f <- filter(OASIS.unit.global, Sex=="F", Age >=70, Age <75) %>%
+  dplyr::select(OASIS.glo) %>%
+  cos.dist() %>% cbind("F", "70-75")
+Global.cos7580f <- filter(OASIS.unit.global, Sex=="F", Age >=75, Age <80) %>%
+  dplyr::select(OASIS.glo) %>%
+  cos.dist() %>% cbind("F", "75-80")
+
+PNC.Global.cos <- rbind(Global.cosu10m, Global.cos1015m, Global.cos1520m, Global.cosu10f, Global.cos1015f, Global.cos1520f) %>% as.data.frame(stringsAsFactors = F)
+HCP.Global.cos <- rbind(Global.cosu25m, Global.cos2530m, Global.cos3035m, Global.cosu25f, Global.cos2530f, Global.cos3035f) %>% as.data.frame(stringsAsFactors = F)
+OASIS.Global.cos <- rbind(Global.cos5055m, Global.cos5560m, Global.cos6065m, Global.cos6570m ,Global.cos7075m, Global.cos7580m,
+      Global.cos5055f, Global.cos5560f, Global.cos6065f, Global.cos6570f ,Global.cos7075f, Global.cos7580f) %>% as.data.frame(stringsAsFactors = F)
+Global.cos <- rbind(Global.cosu10m, Global.cos1015m, Global.cos1520m, Global.cosu10f, Global.cos1015f, Global.cos1520f, 
+                   Global.cosu25m, Global.cos2530m, Global.cos3035m, Global.cosu25f, Global.cos2530f, Global.cos3035f,
+                   Global.cos5055m, Global.cos5560m, Global.cos6065m, Global.cos6570m ,Global.cos7075m, Global.cos7580m,
+                   Global.cos5055f, Global.cos5560f, Global.cos6065f, Global.cos6570f ,Global.cos7075f, Global.cos7580f) %>% as.data.frame(stringsAsFactors = F)
+
+## SC
+#PNC
+SC.cosu10m <- filter(PNC.unit.SC, Sex=="M", Age <10) %>%
+  dplyr::select(PNC.SC) %>%
+  cos.dist() %>% cbind("M", "<10")
+SC.cos1015m <- filter(PNC.unit.SC, Sex=="M", Age >=10, Age <15) %>%
+  dplyr::select(PNC.SC) %>%
+  cos.dist() %>% cbind("M", "10-15")
+SC.cos1520m <- filter(PNC.unit.SC, Sex=="M", Age >=15, Age <20) %>%
+  dplyr::select(PNC.SC) %>%
+  cos.dist() %>% cbind("M", "15-20")
+
+SC.cosu10f <- filter(PNC.unit.SC, Sex=="F", Age <10) %>%
+  dplyr::select(PNC.SC) %>%
+  cos.dist() %>% cbind("F", "<10")
+SC.cos1015f <- filter(PNC.unit.SC, Sex=="F", Age >=10, Age <15) %>%
+  dplyr::select(PNC.SC) %>%
+  cos.dist() %>% cbind("F", "10-15")
+SC.cos1520f <- filter(PNC.unit.SC, Sex=="F", Age >=15, Age <20) %>%
+  dplyr::select(PNC.SC) %>%
+  cos.dist() %>% cbind("F", "15-20")
+
+#HCP
+SC.cosu25m <- filter(HCP.unit.SC, Sex=="Male", Age <25) %>%
+  dplyr::select(HCP.SC) %>%
+  cos.dist() %>% cbind("M", "<25")
+SC.cos2530m <- filter(HCP.unit.SC, Sex=="Male", Age >=25, Age <30) %>%
+  dplyr::select(HCP.SC) %>%
+  cos.dist() %>% cbind("M", "25-30")
+SC.cos3035m <- filter(HCP.unit.SC, Sex=="Male", Age >=30, Age <35) %>%
+  dplyr::select(HCP.SC) %>%
+  cos.dist() %>% cbind("M", "30-35")
+
+SC.cosu25f <- filter(HCP.unit.SC, Sex=="Female", Age <25) %>%
+  dplyr::select(HCP.SC) %>%
+  cos.dist() %>% cbind("F", "<25")
+SC.cos2530f <- filter(HCP.unit.SC, Sex=="Female", Age >=25, Age <30) %>%
+  dplyr::select(HCP.SC) %>%
+  cos.dist() %>% cbind("F", "25-30")
+SC.cos3035f <- filter(HCP.unit.SC, Sex=="Female", Age >=30, Age <35) %>%
+  dplyr::select(HCP.SC) %>%
+  cos.dist() %>% cbind("F", "30-35")
+
+#OASIS
+SC.cos5055m <- filter(OASIS.unit.SC, Sex=="M", Age >=50, Age <55) %>%
+  dplyr::select(OASIS.SC) %>%
+  cos.dist() %>% cbind("M", "50-55")
+SC.cos5560m <- filter(OASIS.unit.SC, Sex=="M", Age >=55, Age <60) %>%
+  dplyr::select(OASIS.SC) %>%
+  cos.dist() %>% cbind("M", "55-60")
+SC.cos6065m <- filter(OASIS.unit.SC, Sex=="M", Age >=60, Age <65) %>%
+  dplyr::select(OASIS.SC) %>%
+  cos.dist() %>% cbind("M", "60-65")
+SC.cos6570m <- filter(OASIS.unit.SC, Sex=="M", Age >=65, Age <70) %>%
+  dplyr::select(OASIS.SC) %>%
+  cos.dist() %>% cbind("M", "65-70")
+SC.cos7075m <- filter(OASIS.unit.SC, Sex=="M", Age >=70, Age <75) %>%
+  dplyr::select(OASIS.SC) %>%
+  cos.dist() %>% cbind("M", "70-75")
+SC.cos7580m <- filter(OASIS.unit.SC, Sex=="M", Age >=75, Age <80) %>%
+  dplyr::select(OASIS.SC) %>%
+  cos.dist() %>% cbind("M", "75-80")
+
+SC.cos5055f <- filter(OASIS.unit.SC, Sex=="F", Age >=50, Age <55) %>%
+  dplyr::select(OASIS.SC) %>%
+  cos.dist() %>% cbind("F", "50-55")
+SC.cos5560f <- filter(OASIS.unit.SC, Sex=="F", Age >=55, Age <60) %>%
+  dplyr::select(OASIS.SC) %>%
+  cos.dist() %>% cbind("F", "55-60")
+SC.cos6065f <- filter(OASIS.unit.SC, Sex=="F", Age >=60, Age <65) %>%
+  dplyr::select(OASIS.SC) %>%
+  cos.dist() %>% cbind("F", "60-65")
+SC.cos6570f <- filter(OASIS.unit.SC, Sex=="F", Age >=65, Age <70) %>%
+  dplyr::select(OASIS.SC) %>%
+  cos.dist() %>% cbind("F", "65-70")
+SC.cos7075f <- filter(OASIS.unit.SC, Sex=="F", Age >=70, Age <75) %>%
+  dplyr::select(OASIS.SC) %>%
+  cos.dist() %>% cbind("F", "70-75")
+SC.cos7580f <- filter(OASIS.unit.SC, Sex=="F", Age >=75, Age <80) %>%
+  dplyr::select(OASIS.SC) %>%
+  cos.dist() %>% cbind("F", "75-80")
+
+PNC.SC.cos <- rbind(SC.cosu10m, SC.cos1015m, SC.cos1520m, SC.cosu10f, SC.cos1015f, SC.cos1520f) %>% as.data.frame(stringsAsFactors = F)
+HCP.SC.cos <- rbind(SC.cosu25m, SC.cos2530m, SC.cos3035m, SC.cosu25f, SC.cos2530f, SC.cos3035f) %>% as.data.frame(stringsAsFactors = F)
+OASIS.SC.cos <- rbind(SC.cos5055m, SC.cos5560m, SC.cos6065m, SC.cos6570m ,SC.cos7075m, SC.cos7580m,
+      SC.cos5055f, SC.cos5560f, SC.cos6065f, SC.cos6570f ,SC.cos7075f, SC.cos7580f) %>% as.data.frame(stringsAsFactors = F)
+SC.cos <- rbind(SC.cosu10m, SC.cos1015m, SC.cos1520m, SC.cosu10f, SC.cos1015f, SC.cos1520f, 
+                   SC.cosu25m, SC.cos2530m, SC.cos3035m, SC.cosu25f, SC.cos2530f, SC.cos3035f,
+                   SC.cos5055m, SC.cos5560m, SC.cos6065m, SC.cos6570m ,SC.cos7075m, SC.cos7580m,
+                   SC.cos5055f, SC.cos5560f, SC.cos6065f, SC.cos6570f ,SC.cos7075f, SC.cos7580f) %>% as.data.frame(stringsAsFactors = F)
+##SA
+#PNC
+SA.cosu10m <- filter(PNC.unit.SA, Sex=="M", Age <10) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("M", "<10")
+SA.cos1015m <- filter(PNC.unit.SA, Sex=="M", Age >=10, Age <15) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("M", "10-15")
+SA.cos1520m <- filter(PNC.unit.SA, Sex=="M", Age >=15, Age <20) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("M", "15-20")
+
+SA.cosu10f <- filter(PNC.unit.SA, Sex=="F", Age <10) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("F", "<10")
+SA.cos1015f <- filter(PNC.unit.SA, Sex=="F", Age >=10, Age <15) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("F", "10-15")
+SA.cos1520f <- filter(PNC.unit.SA, Sex=="F", Age >=15, Age <20) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("F", "15-20")
+
+#HCP
+SA.cosu25m <- filter(HCP.unit.SA, Sex=="Male", Age <25) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("M", "<25")
+SA.cos2530m <- filter(HCP.unit.SA, Sex=="Male", Age >=25, Age <30) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("M", "25-30")
+SA.cos3035m <- filter(HCP.unit.SA, Sex=="Male", Age >=30, Age <35) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("M", "30-35")
+
+SA.cosu25f <- filter(HCP.unit.SA, Sex=="Female", Age <25) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("F", "<25")
+SA.cos2530f <- filter(HCP.unit.SA, Sex=="Female", Age >=25, Age <30) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("F", "25-30")
+SA.cos3035f <- filter(HCP.unit.SA, Sex=="Female", Age >=30, Age <35) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("F", "30-35")
+
+#OASIS
+SA.cos5055m <- filter(OASIS.unit.SA, Sex=="M", Age >=50, Age <55) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("M", "50-55")
+SA.cos5560m <- filter(OASIS.unit.SA, Sex=="M", Age >=55, Age <60) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("M", "55-60")
+SA.cos6065m <- filter(OASIS.unit.SA, Sex=="M", Age >=60, Age <65) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("M", "60-65")
+SA.cos6570m <- filter(OASIS.unit.SA, Sex=="M", Age >=65, Age <70) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("M", "65-70")
+SA.cos7075m <- filter(OASIS.unit.SA, Sex=="M", Age >=70, Age <75) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("M", "70-75")
+SA.cos7580m <- filter(OASIS.unit.SA, Sex=="M", Age >=75, Age <80) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("M", "75-80")
+
+SA.cos5055f <- filter(OASIS.unit.SA, Sex=="F", Age >=50, Age <55) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("F", "50-55")
+SA.cos5560f <- filter(OASIS.unit.SA, Sex=="F", Age >=55, Age <60) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("F", "55-60")
+SA.cos6065f <- filter(OASIS.unit.SA, Sex=="F", Age >=60, Age <65) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("F", "60-65")
+SA.cos6570f <- filter(OASIS.unit.SA, Sex=="F", Age >=65, Age <70) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("F", "65-70")
+SA.cos7075f <- filter(OASIS.unit.SA, Sex=="F", Age >=70, Age <75) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("F", "70-75")
+SA.cos7580f <- filter(OASIS.unit.SA, Sex=="F", Age >=75, Age <80) %>%
+  dplyr::select(starts_with("SA")) %>%
+  cos.dist() %>% cbind("F", "75-80")
+
+PNC.SA.cos <- rbind(SA.cosu10m, SA.cos1015m, SA.cos1520m, SA.cosu10f, SA.cos1015f, SA.cos1520f) %>% as.data.frame(stringsAsFactors = F)
+HCP.SA.cos <- rbind(SA.cosu25m, SA.cos2530m, SA.cos3035m, SA.cosu25f, SA.cos2530f, SA.cos3035f) %>% as.data.frame(stringsAsFactors = F)
+OASIS.SA.cos <- rbind(SA.cos5055m, SA.cos5560m, SA.cos6065m, SA.cos6570m ,SA.cos7075m, SA.cos7580m,
+      SA.cos5055f, SA.cos5560f, SA.cos6065f, SA.cos6570f ,SA.cos7075f, SA.cos7580f) %>% as.data.frame(stringsAsFactors = F)
+SA.cos <- rbind(SA.cosu10m, SA.cos1015m, SA.cos1520m, SA.cosu10f, SA.cos1015f, SA.cos1520f, 
+                   SA.cosu25m, SA.cos2530m, SA.cos3035m, SA.cosu25f, SA.cos2530f, SA.cos3035f,
+                   SA.cos5055m, SA.cos5560m, SA.cos6065m, SA.cos6570m ,SA.cos7075m, SA.cos7580m,
+                   SA.cos5055f, SA.cos5560f, SA.cos6065f, SA.cos6570f ,SA.cos7075f, SA.cos7580f) %>% as.data.frame(stringsAsFactors = F)
+
+##CT
+#PNC
+CT.cosu10m <- filter(PNC.unit.CT, Sex=="M", Age <10) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("M", "<10")
+CT.cos1015m <- filter(PNC.unit.CT, Sex=="M", Age >=10, Age <15) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("M", "10-15")
+CT.cos1520m <- filter(PNC.unit.CT, Sex=="M", Age >=15, Age <20) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("M", "15-20")
+
+CT.cosu10f <- filter(PNC.unit.CT, Sex=="F", Age <10) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("F", "<10")
+CT.cos1015f <- filter(PNC.unit.CT, Sex=="F", Age >=10, Age <15) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("F", "10-15")
+CT.cos1520f <- filter(PNC.unit.CT, Sex=="F", Age >=15, Age <20) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("F", "15-20")
+
+#HCP
+CT.cosu25m <- filter(HCP.unit.CT, Sex=="Male", Age <25) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("M", "<25")
+CT.cos2530m <- filter(HCP.unit.CT, Sex=="Male", Age >=25, Age <30) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("M", "25-30")
+CT.cos3035m <- filter(HCP.unit.CT, Sex=="Male", Age >=30, Age <35) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("M", "30-35")
+
+CT.cosu25f <- filter(HCP.unit.CT, Sex=="Female", Age <25) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("F", "<25")
+CT.cos2530f <- filter(HCP.unit.CT, Sex=="Female", Age >=25, Age <30) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("F", "25-30")
+CT.cos3035f <- filter(HCP.unit.CT, Sex=="Female", Age >=30, Age <35) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("F", "30-35")
+
+#OASIS
+CT.cos5055m <- filter(OASIS.unit.CT, Sex=="M", Age >=50, Age <55) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("M", "50-55")
+CT.cos5560m <- filter(OASIS.unit.CT, Sex=="M", Age >=55, Age <60) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("M", "55-60")
+CT.cos6065m <- filter(OASIS.unit.CT, Sex=="M", Age >=60, Age <65) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("M", "60-65")
+CT.cos6570m <- filter(OASIS.unit.CT, Sex=="M", Age >=65, Age <70) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("M", "65-70")
+CT.cos7075m <- filter(OASIS.unit.CT, Sex=="M", Age >=70, Age <75) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("M", "70-75")
+CT.cos7580m <- filter(OASIS.unit.CT, Sex=="M", Age >=75, Age <80) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("M", "75-80")
+
+CT.cos5055f <- filter(OASIS.unit.CT, Sex=="F", Age >=50, Age <55) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("F", "50-55")
+CT.cos5560f <- filter(OASIS.unit.CT, Sex=="F", Age >=55, Age <60) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("F", "55-60")
+CT.cos6065f <- filter(OASIS.unit.CT, Sex=="F", Age >=60, Age <65) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("F", "60-65")
+CT.cos6570f <- filter(OASIS.unit.CT, Sex=="F", Age >=65, Age <70) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("F", "65-70")
+CT.cos7075f <- filter(OASIS.unit.CT, Sex=="F", Age >=70, Age <75) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("F", "70-75")
+CT.cos7580f <- filter(OASIS.unit.CT, Sex=="F", Age >=75, Age <80) %>%
+  dplyr::select(starts_with("CT")) %>%
+  cos.dist() %>% cbind("F", "75-80")
+
+PNC.CT.cos <- rbind(CT.cosu10m, CT.cos1015m, CT.cos1520m, CT.cosu10f, CT.cos1015f, CT.cos1520f) %>% as.data.frame(stringsAsFactors = F)
+HCP.CT.cos <- rbind(CT.cosu25m, CT.cos2530m, CT.cos3035m, CT.cosu25f, CT.cos2530f, CT.cos3035f) %>% as.data.frame(stringsAsFactors = F)
+OASIS.CT.cos <- rbind(CT.cos5055m, CT.cos5560m, CT.cos6065m, CT.cos6570m ,CT.cos7075m, CT.cos7580m,
+      CT.cos5055f, CT.cos5560f, CT.cos6065f, CT.cos6570f ,CT.cos7075f, CT.cos7580f) %>% as.data.frame(stringsAsFactors = F)
+CT.cos <- rbind(CT.cosu10m, CT.cos1015m, CT.cos1520m, CT.cosu10f, CT.cos1015f, CT.cos1520f, 
+                   CT.cosu25m, CT.cos2530m, CT.cos3035m, CT.cosu25f, CT.cos2530f, CT.cos3035f,
+                   CT.cos5055m, CT.cos5560m, CT.cos6065m, CT.cos6570m ,CT.cos7075m, CT.cos7580m,
+                   CT.cos5055f, CT.cos5560f, CT.cos6065f, CT.cos6570f ,CT.cos7075f, CT.cos7580f) %>% as.data.frame(stringsAsFactors = F)
+
+
+
+############# with age bins
+Anova(lm(as.numeric(V1) ~ V2*V3, data=PNC.Global.cos))
+Anova(lm(as.numeric(V1) ~ V2*V3, data=PNC.SC.cos))
+Anova(lm(as.numeric(V1) ~ V2*V3, data=PNC.SA.cos))
+Anova(lm(as.numeric(V1) ~ V2*V3, data=PNC.CT.cos))
+Anova(lm(as.numeric(V1) ~ V2*V3, data=HCP.Global.cos))
+Anova(lm(as.numeric(V1) ~ V2*V3, data=HCP.SC.cos))
+Anova(lm(as.numeric(V1) ~ V2*V3, data=HCP.SA.cos))
+Anova(lm(as.numeric(V1) ~ V2*V3, data=HCP.CT.cos))
+Anova(lm(as.numeric(V1) ~ V2*V3, data=OASIS.Global.cos))
+Anova(lm(as.numeric(V1) ~ V2*V3, data=OASIS.SC.cos))
+Anova(lm(as.numeric(V1) ~ V2*V3, data=OASIS.SA.cos))
+Anova(lm(as.numeric(V1) ~ V2*V3, data=OASIS.CT.cos))
+
+PNC.glo.fig <- ggplot(PNC.Global.cos, aes(x=V3, colour= V2, y=as.numeric(V1))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+PNC.SC.fig <- ggplot(PNC.SC.cos, aes(x=V3, colour= V2, y=as.numeric(V1))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+PNC.SA.fig <- ggplot(PNC.SA.cos, aes(x=V3, colour= V2, y=as.numeric(V1))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+PNC.CT.fig <- ggplot(PNC.CT.cos, aes(x=V3, colour= V2, y=as.numeric(V1))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+
+HCP.glo.fig <- ggplot(HCP.Global.cos, aes(x=V3, colour= V2, y=as.numeric(V1))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+HCP.SC.fig <- ggplot(HCP.SC.cos, aes(x=V3, colour= V2, y=as.numeric(V1))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+HCP.SA.fig <- ggplot(HCP.SA.cos, aes(x=V3, colour= V2, y=as.numeric(V1))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+HCP.CT.fig <- ggplot(HCP.CT.cos, aes(x=V3, colour= V2, y=as.numeric(V1))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+
+OASIS.glo.fig <- ggplot(OASIS.Global.cos, aes(x=V3, colour= V2, y=as.numeric(V1))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+OASIS.SC.fig <- ggplot(OASIS.SC.cos, aes(x=V3, colour= V2, y=as.numeric(V1))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+OASIS.SA.fig <- ggplot(OASIS.SA.cos, aes(x=V3, colour= V2, y=as.numeric(V1))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+OASIS.CT.fig <- ggplot(OASIS.CT.cos, aes(x=V3, colour= V2, y=as.numeric(V1))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+cos.bin.fig <- plot_grid(PNC.glo.fig, HCP.glo.fig, OASIS.glo.fig, PNC.SC.fig, HCP.SC.fig, OASIS.SC.fig, PNC.SA.fig, HCP.SA.fig, OASIS.SA.fig,
+                      PNC.CT.fig, HCP.CT.fig, OASIS.CT.fig, align="hv", ncol=3)
+
+
+cos.bin.fig.file <- paste(outdir, "Comb_Cosdist_AgeIN_bin.png", sep="/")
+ggsave(cos.bin.fig.file, cos.bin.fig, dpi=300, width = 21, height = 20, units = "cm") #####
+
+
+#Graph all the datasets together
+Global.cos$Age <- factor(Global.cos$V3, c("<10", "10-15", "15-20", "<25", "25-30", "30-35", "50-55", "55-60", "60-65", "65-70", "70-75", "75-80"))
+SC.cos$Age <- factor(SC.cos$V3, c("<10", "10-15", "15-20", "<25", "25-30", "30-35", "50-55", "55-60", "60-65", "65-70", "70-75", "75-80"))
+SA.cos$Age <- factor(SA.cos$V3, c("<10", "10-15", "15-20", "<25", "25-30", "30-35", "50-55", "55-60", "60-65", "65-70", "70-75", "75-80"))
+CT.cos$Age <- factor(CT.cos$V3, c("<10", "10-15", "15-20", "<25", "25-30", "30-35", "50-55", "55-60", "60-65", "65-70", "70-75", "75-80"))
+
+ggplot(Global.cos, aes(x=Age, colour= V2, y=as.numeric(V1))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+ ggplot(SC.cos, aes(x=Age, colour= V2, y=as.numeric(V1))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+ ggplot(SA.cos, aes(x=Age, colour= V2, y=as.numeric(V1))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+ ggplot(CT.cos, aes(x=Age, colour= V2, y=as.numeric(V1))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+
+```
+
+#Plotting Cosine angle
+```{r}
+
+HCP.plt.gl <- ggplot(HCP.cos, aes(x=Age, colour= Sex, y=Global.cos)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+PNC.plt.gl <- ggplot(PNC.cos, aes(x=Age, colour= Sex, y=Global.cos)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+OASIS.plt.gl <- ggplot(OASIS.cos, aes(x=Age, colour= Sex, y=Global.cos)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+#SC
+HCP.plt.sc <- ggplot(HCP.cos, aes(x=Age, colour= Sex, y=SC.cos)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+PNC.plt.sc <- ggplot(PNC.cos, aes(x=Age, colour= Sex, y=SC.cos)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+OASIS.plt.sc <- ggplot(OASIS.cos, aes(x=Age, colour= Sex, y=SC.cos)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+#SA
+HCP.plt.sa <- ggplot(HCP.cos, aes(x=Age, colour= Sex, y=SA.cos)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+PNC.plt.sa <- ggplot(PNC.cos, aes(x=Age, colour= Sex, y=SA.cos)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+OASIS.plt.sa <- ggplot(OASIS.cos, aes(x=Age, colour= Sex, y=SA.cos)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+#CT
+HCP.plt.ct <- ggplot(HCP.cos, aes(x=Age, colour= Sex, y=CT.cos)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+PNC.plt.ct <- ggplot(PNC.cos, aes(x=Age, colour= Sex, y=CT.cos)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+OASIS.plt.ct <- ggplot(OASIS.cos, aes(x=Age, colour= Sex, y=CT.cos)) + geom_jitter(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle") + ylim(0,150) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+plot_grid(PNC.plt.gl, HCP.plt.gl, OASIS.plt.gl, PNC.plt.sc, HCP.plt.sc, OASIS.plt.sc, PNC.plt.sa, HCP.plt.sa, OASIS.plt.sa, 
+          PNC.plt.ct, HCP.plt.ct, OASIS.plt.ct, align="hv", ncol = 3)
+
+cos.plt <- plot_grid(PNC.plt.gl, HCP.plt.gl, OASIS.plt.gl, PNC.plt.sc, HCP.plt.sc, OASIS.plt.sc, PNC.plt.sa, HCP.plt.sa, OASIS.plt.sa, 
+          PNC.plt.ct, HCP.plt.ct, OASIS.plt.ct, align="hv", ncol = 3)
+
+cos.plt.file <- paste(outdir, "Comb_Cosdist_AgeIN.png", sep="/")
+ggsave(cos.plt.file, cos.plt, dpi=300, width = 21, height = 20, units = "cm") #####
+
+
+```
+
+
+# playing/investigating mu 
+```{r}
+#PNC
+PNC.glo.M.mu <- filter(PNC.unit.global, Sex=="M") %>%
+  dplyr::select(PNC.glo) %>% cent(200)
+PNC.glo.M.mu.u10 <- filter(PNC.unit.global, Sex=="M", Age<10) %>%
+  dplyr::select(PNC.glo) %>% cent(200)
+PNC.glo.M.mu.10.15 <- filter(PNC.unit.global, Sex=="M", Age>=10, Age<15) %>%
+  dplyr::select(PNC.glo) %>% cent(200)
+PNC.glo.M.mu.15.20 <- filter(PNC.unit.global, Sex=="M", Age>=15, Age<20) %>%
+  dplyr::select(PNC.glo) %>% cent(200)
+
+
+PNC.SC.M.mu <- filter(PNC.unit.SC, Sex=="M") %>%
+  dplyr::select(PNC.SC) %>% cent(200)
+PNC.SC.M.mu.u10 <- filter(PNC.unit.SC, Sex=="M", Age<10) %>%
+  dplyr::select(PNC.SC) %>% cent(200)
+PNC.SC.M.mu.10.15 <- filter(PNC.unit.SC, Sex=="M", Age>=10, Age<15) %>%
+  dplyr::select(PNC.SC) %>% cent(200)
+PNC.SC.M.mu.15.20 <- filter(PNC.unit.SC, Sex=="M", Age>=15, Age<20) %>%
+  dplyr::select(PNC.SC) %>% cent(200)
+
+PNC.SA.M.mu <- filter(PNC.unit.SA, Sex=="M") %>% dplyr::select(starts_with("SA")) %>% cent(200)
+PNC.SA.M.mu.u10 <- filter(PNC.unit.SA, Sex=="M", Age<10) %>% dplyr::select(starts_with("SA")) %>% cent(200)
+PNC.SA.M.mu.10.15 <- filter(PNC.unit.SA, Sex=="M", Age>=10, Age<15) %>% dplyr::select(starts_with("SA")) %>% cent(200)
+PNC.SA.M.mu.15.20 <- filter(PNC.unit.SA, Sex=="M", Age>=15, Age<20) %>% dplyr::select(starts_with("SA")) %>% cent(200)
+
+PNC.CT.M.mu<- filter(PNC.unit.CT, Sex=="M") %>% dplyr::select(starts_with("CT")) %>% cent(200)
+PNC.CT.M.mu.u10 <- filter(PNC.unit.CT, Sex=="M", Age<10) %>% dplyr::select(starts_with("CT")) %>% cent(200)
+PNC.CT.M.mu.10.15 <- filter(PNC.unit.CT, Sex=="M", Age>=10, Age<15) %>% dplyr::select(starts_with("CT")) %>% cent(200)
+PNC.CT.M.mu.15.20 <- filter(PNC.unit.CT, Sex=="M", Age>=15, Age<20) %>% dplyr::select(starts_with("CT")) %>% cent(200)
+
+PNC.glo.F.mu <- filter(PNC.unit.global, Sex=="F") %>%
+  dplyr::select(PNC.glo) %>% cent(200)
+PNC.glo.F.mu.u10 <- filter(PNC.unit.global, Sex=="F", Age<10) %>%
+  dplyr::select(PNC.glo) %>% cent(200)
+PNC.glo.F.mu.10.15 <- filter(PNC.unit.global, Sex=="F", Age>=10, Age<15) %>%
+  dplyr::select(PNC.glo) %>% cent(200)
+PNC.glo.F.mu.15.20 <- filter(PNC.unit.global, Sex=="F", Age>=15, Age<20) %>%
+  dplyr::select(PNC.glo) %>% cent(200)
+
+PNC.SC.F.mu <- filter(PNC.unit.SC, Sex=="F") %>%
+  dplyr::select(PNC.SC) %>% cent(200)
+PNC.SC.F.mu.u10 <- filter(PNC.unit.SC, Sex=="F", Age<10) %>%
+  dplyr::select(PNC.SC) %>% cent(200)
+PNC.SC.F.mu.10.15 <- filter(PNC.unit.SC, Sex=="F", Age>=10, Age<15) %>%
+  dplyr::select(PNC.SC) %>% cent(200)
+PNC.SC.F.mu.15.20 <- filter(PNC.unit.SC, Sex=="F", Age>=15, Age<20) %>%
+  dplyr::select(PNC.SC) %>% cent(200)
+
+
+
+PNC.SA.F.mu <- filter(PNC.unit.SA, Sex=="F") %>% dplyr::select(starts_with("SA")) %>% cent(200)
+PNC.SA.F.mu.u10 <- filter(PNC.unit.SA, Sex=="F", Age<10) %>% dplyr::select(starts_with("SA")) %>% cent(200)
+PNC.SA.F.mu.10.15 <- filter(PNC.unit.SA, Sex=="F", Age>=10, Age<15) %>% dplyr::select(starts_with("SA")) %>% cent(200)
+PNC.SA.F.mu.15.20 <- filter(PNC.unit.SA, Sex=="F", Age>=15, Age<20) %>% dplyr::select(starts_with("SA")) %>% cent(200)
+
+PNC.CT.F.mu <- filter(PNC.unit.CT, Sex=="F") %>% dplyr::select(starts_with("CT")) %>% cent(200)
+PNC.CT.F.mu.u10 <- filter(PNC.unit.CT, Sex=="F", Age<10) %>% dplyr::select(starts_with("CT")) %>% cent(200)
+PNC.CT.F.mu.10.15 <- filter(PNC.unit.CT, Sex=="F", Age>=10, Age<15) %>% dplyr::select(starts_with("CT")) %>% cent(200)
+PNC.CT.F.mu.15.20 <- filter(PNC.unit.CT, Sex=="F", Age>=15, Age<20) %>% dplyr::select(starts_with("CT")) %>% cent(200)
+
+#HCP
+HCP.glo.M.mu <- filter(HCP.unit.global, Sex=="Male") %>%
+  dplyr::select(HCP.glo) %>% cent(200)
+
+HCP.SC.M.mu <- filter(HCP.unit.SC, Sex=="Male") %>%
+  dplyr::select(HCP.SC) %>% cent(200)
+
+HCP.SA.M.mu <- filter(HCP.unit.SA, Sex=="Male") %>% dplyr::select(starts_with("SA")) %>% cent(200)
+HCP.CT.M.mu<- filter(HCP.unit.CT, Sex=="Male") %>% dplyr::select(starts_with("CT")) %>% cent(200)
+
+HCP.glo.F.mu <- filter(HCP.unit.global, Sex=="Female") %>%
+  dplyr::select(HCP.glo) %>%  cent(200)
+
+HCP.SC.F.mu <- filter(HCP.unit.SC, Sex=="Female") %>%
+  dplyr::select(HCP.SC) %>%  cent(200)
+
+HCP.SA.F.mu <- filter(HCP.unit.SA, Sex=="Female") %>% dplyr::select(starts_with("SA")) %>% cent(200)
+HCP.CT.F.mu <- filter(HCP.unit.CT, Sex=="Female") %>% dplyr::select(starts_with("CT")) %>% cent(200)
+
+#OASIS
+OASIS.glo.M.mu <- filter(OASIS.unit.global, Sex=="M") %>%
+  dplyr::select(OASIS.glo) %>% cent(200)
+OASIS.glo.M.mu.50.55 <- filter(OASIS.unit.global, Sex=="M", Age>=50, Age<55) %>%
+  dplyr::select(OASIS.glo) %>% cent(200)
+OASIS.glo.M.mu.55.60 <- filter(OASIS.unit.global, Sex=="M", Age>=55, Age<60) %>%
+  dplyr::select(OASIS.glo) %>% cent(200)
+OASIS.glo.M.mu.60.65 <- filter(OASIS.unit.global, Sex=="M", Age>=60, Age<65) %>%
+  dplyr::select(OASIS.glo) %>% cent(200)
+OASIS.glo.M.mu.65.70 <- filter(OASIS.unit.global, Sex=="M", Age>=65, Age<70) %>%
+  dplyr::select(OASIS.glo) %>% cent(200)
+OASIS.glo.M.mu.70.75 <- filter(OASIS.unit.global, Sex=="M", Age>=70, Age<75) %>%
+  dplyr::select(OASIS.glo) %>% cent(200)
+OASIS.glo.M.mu.75.80 <- filter(OASIS.unit.global, Sex=="M", Age>=75, Age<80) %>%
+  dplyr::select(OASIS.glo) %>% cent(200)
+
+OASIS.SC.M.mu <- filter(OASIS.unit.SC, Sex=="M") %>%
+  dplyr::select(OASIS.SC) %>% cent(200)
+OASIS.SC.M.mu.50.55 <- filter(OASIS.unit.SC, Sex=="M", Age>=50, Age <55) %>%
+  dplyr::select(OASIS.SC) %>% cent(200)
+OASIS.SC.M.mu.55.60 <- filter(OASIS.unit.SC, Sex=="M", Age>=55, Age<60) %>%
+  dplyr::select(OASIS.SC) %>% cent(200)
+OASIS.SC.M.mu.60.65 <- filter(OASIS.unit.SC, Sex=="M", Age>=60, Age<65) %>%
+  dplyr::select(OASIS.SC) %>% cent(200)
+OASIS.SC.M.mu.65.70 <- filter(OASIS.unit.SC, Sex=="M", Age>=65, Age<70) %>%
+  dplyr::select(OASIS.SC) %>% cent(200)
+OASIS.SC.M.mu.70.75 <- filter(OASIS.unit.SC, Sex=="M", Age>=70, Age<75) %>%
+  dplyr::select(OASIS.SC) %>% cent(200)
+OASIS.SC.M.mu.75.80 <- filter(OASIS.unit.SC, Sex=="M", Age>=75, Age<80) %>%
+  dplyr::select(OASIS.SC) %>% cent(200)
+
+OASIS.SA.M.mu <- filter(OASIS.unit.SA, Sex=="M") %>% dplyr::select(starts_with("SA")) %>% cent(200)
+OASIS.SA.M.mu.50.55 <- filter(OASIS.unit.SA, Sex=="M", Age>=50, Age<55) %>% dplyr::select(starts_with("SA")) %>% cent(200)
+OASIS.SA.M.mu.55.60 <- filter(OASIS.unit.SA, Sex=="M", Age>=55, Age<60) %>% dplyr::select(starts_with("SA")) %>% cent(200)
+OASIS.SA.M.mu.60.65 <- filter(OASIS.unit.SA, Sex=="M", Age>=60, Age<65) %>% dplyr::select(starts_with("SA")) %>% cent(200)
+OASIS.SA.M.mu.65.70 <- filter(OASIS.unit.SA, Sex=="M", Age>=65, Age<70) %>% dplyr::select(starts_with("SA")) %>% cent(200)
+OASIS.SA.M.mu.70.75 <- filter(OASIS.unit.SA, Sex=="M", Age>=70, Age<75) %>% dplyr::select(starts_with("SA")) %>% cent(200)
+OASIS.SA.M.mu.75.80 <- filter(OASIS.unit.SA, Sex=="M", Age>=75, Age<80) %>% dplyr::select(starts_with("SA")) %>% cent(200)
+
+OASIS.CT.M.mu<- filter(OASIS.unit.CT, Sex=="M") %>% dplyr::select(starts_with("CT")) %>% cent(200)
+OASIS.CT.M.mu.50.55 <- filter(OASIS.unit.CT, Sex=="M", Age>=50, Age<55) %>% dplyr::select(starts_with("CT")) %>% cent(200)
+OASIS.CT.M.mu.55.60 <- filter(OASIS.unit.CT, Sex=="M", Age>=55, Age<60) %>% dplyr::select(starts_with("CT")) %>% cent(200)
+OASIS.CT.M.mu.60.65 <- filter(OASIS.unit.CT, Sex=="M", Age>=60, Age<65) %>% dplyr::select(starts_with("CT")) %>% cent(200)
+OASIS.CT.M.mu.65.70 <- filter(OASIS.unit.CT, Sex=="M", Age>=65, Age<70) %>% dplyr::select(starts_with("CT")) %>% cent(200)
+OASIS.CT.M.mu.70.75 <- filter(OASIS.unit.CT, Sex=="M", Age>=70, Age<75) %>% dplyr::select(starts_with("CT")) %>% cent(200)
+OASIS.CT.M.mu.75.80 <- filter(OASIS.unit.CT, Sex=="M", Age>=75, Age<80) %>% dplyr::select(starts_with("CT")) %>% cent(200)
+
+OASIS.glo.F.mu <- filter(OASIS.unit.global, Sex=="F") %>%
+  dplyr::select(OASIS.glo) %>% cent(200)
+OASIS.glo.F.mu.50.55 <- filter(OASIS.unit.global, Sex=="F", Age>=50, Age<55) %>%
+  dplyr::select(OASIS.glo) %>% cent(200)
+OASIS.glo.F.mu.55.60 <- filter(OASIS.unit.global, Sex=="F", Age>=55, Age<60) %>%
+  dplyr::select(OASIS.glo) %>% cent(200)
+OASIS.glo.F.mu.60.65 <- filter(OASIS.unit.global, Sex=="F", Age>=60, Age<65) %>%
+  dplyr::select(OASIS.glo) %>% cent(200)
+OASIS.glo.F.mu.65.70 <- filter(OASIS.unit.global, Sex=="F", Age>=65, Age<70) %>%
+  dplyr::select(OASIS.glo) %>% cent(200)
+OASIS.glo.F.mu.70.75 <- filter(OASIS.unit.global, Sex=="F", Age>=70, Age<75) %>%
+  dplyr::select(OASIS.glo) %>% cent(200)
+OASIS.glo.F.mu.75.80 <- filter(OASIS.unit.global, Sex=="F", Age>=75, Age<80) %>%
+  dplyr::select(OASIS.glo) %>% cent(200)
+
+OASIS.SC.F.mu <- filter(OASIS.unit.SC, Sex=="F") %>%
+  dplyr::select(OASIS.SC) %>% cent(200)
+OASIS.SC.F.mu.50.55 <- filter(OASIS.unit.SC, Sex=="F", Age>=50, Age<55) %>%
+  dplyr::select(OASIS.SC) %>% cent(200)
+OASIS.SC.F.mu.55.60 <- filter(OASIS.unit.SC, Sex=="F", Age>=55, Age<60) %>%
+  dplyr::select(OASIS.SC) %>% cent(200)
+OASIS.SC.F.mu.60.65 <- filter(OASIS.unit.SC, Sex=="F", Age>=60, Age<65) %>%
+  dplyr::select(OASIS.SC) %>% cent(200)
+OASIS.SC.F.mu.65.70 <- filter(OASIS.unit.SC, Sex=="F", Age>=65, Age<70) %>%
+  dplyr::select(OASIS.SC) %>% cent(200)
+OASIS.SC.F.mu.70.75 <- filter(OASIS.unit.SC, Sex=="F", Age>=70, Age<75) %>%
+  dplyr::select(OASIS.SC) %>% cent(200)
+OASIS.SC.F.mu.75.80 <- filter(OASIS.unit.SC, Sex=="F", Age>=75, Age<80) %>%
+  dplyr::select(OASIS.SC) %>% cent(200)
+
+OASIS.SA.F.mu <- filter(OASIS.unit.SA, Sex=="F") %>% dplyr::select(starts_with("SA")) %>% cent(200)
+OASIS.SA.F.mu.50.55 <- filter(OASIS.unit.SA, Sex=="F", Age>=50, Age<55) %>% dplyr::select(starts_with("SA")) %>% cent(200)
+OASIS.SA.F.mu.55.60 <- filter(OASIS.unit.SA, Sex=="F", Age>=55, Age<60) %>% dplyr::select(starts_with("SA")) %>% cent(200)
+OASIS.SA.F.mu.60.65 <- filter(OASIS.unit.SA, Sex=="F", Age>=60, Age<65) %>% dplyr::select(starts_with("SA")) %>% cent(200)
+OASIS.SA.F.mu.65.70 <- filter(OASIS.unit.SA, Sex=="F", Age>=65, Age<70) %>% dplyr::select(starts_with("SA")) %>% cent(200)
+OASIS.SA.F.mu.70.75 <- filter(OASIS.unit.SA, Sex=="F", Age>=70, Age<75) %>% dplyr::select(starts_with("SA")) %>% cent(200)
+OASIS.SA.F.mu.75.80 <- filter(OASIS.unit.SA, Sex=="F", Age>=75, Age<80) %>% dplyr::select(starts_with("SA")) %>% cent(200)
+
+
+OASIS.CT.F.mu <- filter(OASIS.unit.CT, Sex=="F") %>% dplyr::select(starts_with("CT")) %>% cent(200)
+OASIS.CT.F.mu.50.55 <- filter(OASIS.unit.CT, Sex=="F", Age>=50, Age<55) %>% dplyr::select(starts_with("CT")) %>% cent(200)
+OASIS.CT.F.mu.55.60 <- filter(OASIS.unit.CT, Sex=="F", Age>=55, Age<60) %>% dplyr::select(starts_with("CT")) %>% cent(200)
+OASIS.CT.F.mu.60.65 <- filter(OASIS.unit.CT, Sex=="F", Age>=60, Age<65) %>% dplyr::select(starts_with("CT")) %>% cent(200)
+OASIS.CT.F.mu.65.70 <- filter(OASIS.unit.CT, Sex=="F", Age>=65, Age<70) %>% dplyr::select(starts_with("CT")) %>% cent(200)
+OASIS.CT.F.mu.70.75 <- filter(OASIS.unit.CT, Sex=="F", Age>=70, Age<75) %>% dplyr::select(starts_with("CT")) %>% cent(200)
+OASIS.CT.F.mu.75.80 <- filter(OASIS.unit.CT, Sex=="F", Age>=75, Age<80) %>% dplyr::select(starts_with("CT")) %>% cent(200)
+
+cos.distMF <- function(m,f){
+  sim <- t(m) %*% f 
+  deg <- acos(sim) * 180/pi
+  return(deg) 
+}
+
+
+
+
+```
+

@@ -1,0 +1,1518 @@
+---
+title: "FreeSurfer OASIS"
+author: "nforde"
+date: "December 21, 2018"
+output: html_document
+---
+# get libraries/set paths
+```{r}
+library(tidyverse)
+library(broom)
+library(knitr)
+library(car)
+library(cowplot)
+library(lme4)
+library(ggseg)
+library(gridExtra)
+library(reshape2)
+
+## set all the paths
+#OASIS
+behaviour <- read.csv("/scratch/nforde/OASIS/clinical.csv")
+FS_orig <- read.csv("/scratch/nforde/OASIS/FreeSurfer.csv")
+FS_SA <- read.csv("/scratch/nforde/OASIS/FS_SA.csv")
+MRI <- read.csv("/scratch/nforde/OASIS/MRsessionInfo.csv")
+
+
+outdir <- "/projects/nforde/HCP/stats/OASIS"
+
+```
+# define functions
+
+```{r}
+## for normalising data
+transform_to_normal <- function(X) {
+  # calculate the best exponent using powerTransform:
+  pT <- powerTransform(X)
+  # apply the power transform and save the result to a new variable
+  X_pT <- X^pT$lambda ## note ^ is exponent in r
+  return(X_pT)
+}
+
+## function to extract stats from lm
+extract <- function(X,num){ 
+  lapply(X, function(i){
+    F_age <- lapply(get(i), function(f) Anova(f)$"F value"[1])
+    F_sex <- lapply(get(i), function(f) Anova(f)$"F value"[2])
+    F_XTBVheight <-lapply(get(i), function(f) Anova(f)$"F value"[3])
+    p_age <-lapply(get(i), function(f) Anova(f)$"Pr(>F)"[1])
+    p_sex <-lapply(get(i), function(f) Anova(f)$"Pr(>F)"[2])
+    p_XTBVheight <-lapply(get(i), function(f) Anova(f)$"Pr(>F)"[3])
+    adjRsq <- sapply(get(i), function(f) summary(f)$adj.r.squared)
+    padj_age <- p.adjust(p_age, method="fdr", n=num)
+    padj_sex <- p.adjust(p_sex, method="fdr", n=num)
+    padj_XTBVheight <- p.adjust(p_XTBVheight, method="fdr", n=num)
+    
+    merged <- as.data.frame(cbind(F_age, padj_age, F_sex, padj_sex, F_XTBVheight, padj_XTBVheight, adjRsq))
+    return(merged)
+  })
+}
+
+## function to extract stats from lmer
+extract_lmer <- function(i){ 
+  Chi_age <- lapply((i), function(f) Anova(f)$"Chisq"[1])
+  Chi_sex <- lapply((i), function(f) Anova(f)$"Chisq"[2])
+  Chi_hemi <-lapply((i), function(f) Anova(f)$"Chisq"[3])
+  Chi_sexXhemi <-lapply((i), function(f) Anova(f)$"Chisq"[4])
+  p_age <-lapply((i), function(f) Anova(f)$"Pr(>Chisq)"[1])
+  p_sex <-lapply((i), function(f) Anova(f)$"Pr(>Chisq)"[2])
+  p_hemi <-lapply((i), function(f) Anova(f)$"Pr(>Chisq)"[3])
+  p_sexXhemi <-lapply((i), function(f) Anova(f)$"Pr(>Chisq)"[4])
+  padj_age <- p.adjust(p_age, method="fdr")
+  padj_sex <- p.adjust(p_sex, method="fdr")
+  padj_hemi <- p.adjust(p_hemi, method="fdr")
+  padj_sexXhemi <- p.adjust(p_sexXhemi, method="fdr")
+    
+  merged <- as.data.frame(cbind(Chi_age, padj_age, Chi_sex, padj_sex, Chi_hemi, padj_hemi, Chi_sexXhemi, padj_sexXhemi))
+  return(merged)
+}
+
+extractT <- function(i, num){
+  Tval <- lapply((i), function(f) f$statistic)
+  Pval <- lapply((i), function(f) f$p.value)
+  dof <- lapply((i), function(f) f$parameter)
+   
+  Padj <- p.adjust(Pval, method="fdr", n=num)
+  Cohen <- (as.numeric(Tval)*2)/sqrt(as.numeric(dof))
+  
+  merged <- as.data.frame(cbind(Tval, Padj, Cohen))
+  return(merged)
+
+}
+
+## function to extract stats from var.test
+extract_var <- function(X, num){ 
+  VR <- lapply(X, function(f) (f)$"estimate")
+  VR_p <- lapply(X, function(f) (f)$"p.value")
+  padj_VR <- p.adjust(VR_p, method="fdr", n=num)
+  
+  merged <- as.data.frame(cbind(VR, padj_VR))
+  return(merged)
+}
+
+
+### function to plot and grid multiple figures
+plot_box <- function(ROIs, df) {
+  a <- lapply(ROIs, function(f) ggplot(df, aes(x=Sex, color= Sex)) + geom_boxplot(aes_string(y=f)) 
+              + theme(axis.title.x = element_blank(), axis.text=element_text(size=8), axis.title=element_text(size=10), legend.position="none"))
+  # grid <- do.call(grid.arrange, a)
+  return(a)
+} #
+
+#same as above, split violin instead of box
+plot_vio <- function(ROIs, df) {
+  a <- lapply(ROIs, function(f) ggplot(df, aes(x="Sex", fill= Sex)) + geom_split_violin(aes_string(y=f)) 
+              + theme(axis.title.x = element_blank(), axis.text.x = element_blank(), axis.text.y=element_text(size=8),
+                      axis.title=element_text(size=10), legend.position="none")
+              +stat_summary(aes_string(y=f), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75)))
+  return(a)
+} #
+
+
+plot_age <- function(ROIs,df) {
+  a <- lapply(ROIs, function(f) ggplot(df, aes(x=Age, color =Sex)) +xlab("Age (years)") 
+              + theme(axis.text=element_text(size=8), axis.title=element_text(size=10), legend.position="none") 
+              + geom_jitter(aes_string(y=f), width=0.2, size= 0.5) + geom_smooth(aes_string(y=f), span = 0.5))
+  return(a)
+}
+
+### function to plot measure by sex, grouped by hemisphere
+plot_box_hemi <- function(ROIs, df) {
+  a <- lapply(ROIs, function(f) ggplot(df, aes(x=hemi, fill = Sex)) + geom_boxplot(aes_string(y=f)) 
+              + theme(axis.title.x = element_blank(), axis.text=element_text(size=8), axis.title=element_text(size=10), legend.position="none"))
+  return(a)
+} #
+
+#same as above, split violin instead of box
+plot_vio_hemi <- function(ROIs, df) {
+  a <- lapply(ROIs, function(f) ggplot(df, aes(x=hemi, fill = Sex)) + geom_split_violin(aes_string(y=f)) 
+              + theme(axis.title.x = element_blank(), axis.text=element_text(size=8), axis.title=element_text(size=10), legend.position="none") 
+              +stat_summary(aes_string(y=f), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, size=0.5, 
+                            position = position_dodge(width = .75)))
+  return(a)
+} #
+
+# + scale_x_discrete(labels= c("Female","Male"))  + theme(axis.title.x = element_blank())
+# plot X by age and gender
+plot_age_hemi <- function(ROIs,df) {
+  a <- lapply(ROIs, function(f) ggplot(df, aes(x=Age, color =Sex)) +xlab("Age (years)") 
+              + geom_jitter(aes_string(y=f), width=0.2, size= 0.5) + geom_smooth(aes_string(y=f), span = 0.5) 
+              + facet_grid(. ~hemi , scales = "free_y")
+              + theme(axis.text=element_text(size=10), axis.title=element_text(size=12), legend.position="none", 
+                      strip.text = element_text(size=12)))
+  return(a)
+}
+
+GeomSplitViolin <- ggproto("GeomSplitViolin", GeomViolin, draw_group = function(self, data, ..., draw_quantiles = NULL){
+  data <- transform(data, xminv = x - violinwidth * (x - xmin), xmaxv = x + violinwidth * (xmax - x))
+  grp <- data[1,'group']
+  newdata <- plyr::arrange(transform(data, x = if(grp%%2==1) xminv else xmaxv), if(grp%%2==1) y else -y)
+  newdata <- rbind(newdata[1, ], newdata, newdata[nrow(newdata), ], newdata[1, ])
+  newdata[c(1,nrow(newdata)-1,nrow(newdata)), 'x'] <- round(newdata[1, 'x']) 
+  if (length(draw_quantiles) > 0 & !scales::zero_range(range(data$y))) {
+    stopifnot(all(draw_quantiles >= 0), all(draw_quantiles <= 
+                                              1))
+    quantiles <- ggplot2:::create_quantile_segment_frame(data, draw_quantiles)
+    aesthetics <- data[rep(1, nrow(quantiles)), setdiff(names(data), c("x", "y")), drop = FALSE]
+    aesthetics$alpha <- rep(1, nrow(quantiles))
+    both <- cbind(quantiles, aesthetics)
+    quantile_grob <- GeomPath$draw_panel(both, ...)
+    ggplot2:::ggname("geom_split_violin", grid::grobTree(GeomPolygon$draw_panel(newdata, ...), quantile_grob))
+  }
+  else {
+    ggplot2:::ggname("geom_split_violin", GeomPolygon$draw_panel(newdata, ...))
+  }
+})
+
+geom_split_violin <- function (mapping = NULL, data = NULL, stat = "ydensity", position = "identity", ..., draw_quantiles = NULL, trim = TRUE, scale = "area", na.rm = FALSE, show.legend = NA, inherit.aes = TRUE) {
+  layer(data = data, mapping = mapping, stat = stat, geom = GeomSplitViolin, position = position, show.legend = show.legend, inherit.aes = inherit.aes, params = list(trim = trim, scale = scale, draw_quantiles = draw_quantiles, na.rm = na.rm, ...))
+}
+
+```
+# organise
+```{r}
+##merge FS_orig and FS_SA data
+FS_full <- merge(FS_orig, FS_SA, by.x=c("Subject","FS_FSDATA.ID"), by.y=c("subject", "assessor"))
+
+### need to fix filtering so scans from a clinically healthy time only are included
+FS_qcd <- filter(FS_full, FS.QC.Status == "Passed") %>% distinct(Subject, .keep_all = TRUE)
+FS_qcd$MR.ID <- sub("Freesurfer53", "MR", FS_qcd$FS_FSDATA.ID)
+
+behav <- filter(behaviour, dx1 == "Cognitively normal") %>% distinct(Subject, dx1, .keep_all = TRUE)
+
+FS <- merge(FS_qcd, MRI[c("MR.ID","Subject", "Age", "Scanner")], by =c("Subject", "MR.ID")) %>% filter(Scanner == "3.0T")
+
+all <- merge(FS, behav[c("Subject", "cdr", "ageAtEntry", "dx1")], by = "Subject")
+
+all$age_diff <- (all$Age - all$ageAtEntry)
+
+
+# calc total cerebellum wm and gm vol
+all$Cerebellum_CortVol <- (all$Left.Cerebellum.Cortex_volume + all$Right.Cerebellum.Cortex_volume) ################
+all$Cerebellum_WMVol <- (all$Left.Cerebellum.White.Matter_volume + all$Right.Cerebellum.White.Matter_volume) ##############
+all$BrainSeg_No_VentVol <- (all$TotalGrayVol + all$CorticalWhiteMatterVol + all$Cerebellum_CortVol + all$Cerebellum_WMVol)
+
+colnames(all) <- sub("Vol", "_volume", colnames(all)) 
+colnames(all) <- sub("Left.", "lh_", colnames(all)) 
+colnames(all) <- sub("Right.", "rh_", colnames(all)) 
+
+# Isolate vol measures and separate out hemis  
+Vol.df <- all %>% select(contains("_volume")) %>% cbind(all["Subject"]) 
+colnames(Vol.df) <- sub("_volume", "", colnames(Vol.df)) 
+
+Vol.R <- Vol.df %>% select(starts_with("rh_")) %>% cbind(all["Subject"]) 
+colnames(Vol.R) <- sub("rh_", "", colnames(Vol.R)) 
+Vol.R$hemi <- "right" 
+
+Vol.L <- Vol.df %>% select(starts_with("lh_")) %>% cbind(all["Subject"]) 
+colnames(Vol.L) <- sub("lh_", "", colnames(Vol.L)) 
+Vol.L$hemi <- "left" 
+
+Vol.hemi <- rbind(Vol.R, Vol.L)
+
+Vol.df <- merge(Vol.df, all[c("Sex", "Subject", "Age")], by=("Subject"))
+Vol.hemi <- merge(Vol.hemi, all[c("Sex", "Subject", "Age")], by=("Subject")) 
+
+## Cortical thickness
+CT.df <- all %>% select(contains("_thickness")) %>% cbind(all["Subject"]) 
+colnames(CT.df) <- sub("_thickness", "", colnames(CT.df)) 
+
+CT.R <- CT.df %>% select(starts_with("rh_")) %>% cbind(all["Subject"]) 
+colnames(CT.R) <- sub("rh_", "", colnames(CT.R)) 
+CT.R$hemi <- "right" 
+
+CT.L <- CT.df %>% select(starts_with("lh_")) %>% cbind(all["Subject"]) 
+colnames(CT.L) <- sub("lh_", "", colnames(CT.L)) 
+CT.L$hemi <- "left" 
+
+CT.hemi <- rbind(CT.R, CT.L)
+
+CT.df <- merge(CT.df, all[c("Sex", "Subject", "Age")], by=("Subject")) %>% merge(Vol.df[c("Subject", "BrainSeg_No_Vent")], by=("Subject"))
+CT.hemi <- merge(CT.hemi, all[c("Sex", "Subject", "Age")], by=("Subject")) %>% merge(Vol.df[c("Subject", "BrainSeg_No_Vent")], by=("Subject"))
+
+
+### Surface Area
+SA.df <- all %>% select(contains("_Area")) %>% cbind(all["Subject"]) 
+colnames(SA.df) <- sub("_Area", "", colnames(SA.df)) 
+
+SA.R <- SA.df %>% select(starts_with("rh_")) %>% cbind(all["Subject"]) 
+colnames(SA.R) <- sub("rh_", "", colnames(SA.R)) 
+SA.R$hemi <- "right" 
+
+SA.L <- SA.df %>% select(starts_with("lh_")) %>% cbind(all["Subject"]) 
+colnames(SA.L) <- sub("lh_", "", colnames(SA.L)) 
+SA.L$hemi <- "left" 
+
+SA.hemi <- rbind(SA.L, SA.R)
+
+SA.df <- merge(SA.df, all[c("Sex","Subject", "Age")], by=("Subject")) %>% merge(Vol.df[c("Subject", "BrainSeg_No_Vent")], by=("Subject"))
+SA.hemi <- merge(SA.hemi, all[c("Sex", "Subject", "Age")], by=("Subject")) %>% merge(Vol.df[c("Subject", "BrainSeg_No_Vent")], by=("Subject"))
+
+### lists of variables
+overall <- c("TotalGray", "CorticalWhiteMatter", "Cerebellum_Cort", "Cerebellum_WM") ###########################
+overallincTBV <- c("BrainSeg_No_Vent", "TotalGray", "CorticalWhiteMatter", "Cerebellum_Cort", "Cerebellum_WM") ###############
+SubCortLR <- c("lh_Thalamus.Proper", "lh_Caudate", "lh_Putamen", "lh_Pallidum", "lh_Hippocampus", "lh_Amygdala", "lh_Accumbens.area", "rh_Thalamus.Proper", "rh_Caudate", "rh_Putamen",  "rh_Pallidum", "rh_Hippocampus",  "rh_Amygdala", "rh_Accumbens.area")
+SubCort <- c("Thalamus.Proper", "Caudate", "Putamen", "Pallidum", "Hippocampus", "Amygdala", "Accumbens.area")
+CC <- c("CC_Posterior", "CC_MidPosterior", "CC_Central", "CC_MidAnterior", "CC_Anterior")
+CortLR <- names(CT.df)[2:69]
+Cort <- names(CT.hemi)[2:35]
+```
+# Stats Overall
+```{r}
+### Total Brain Volume (BrainSeg_No_Vent) analysis
+TBVsimpX <- lm(BrainSeg_No_Vent ~ Age*Sex, data=Vol.df)
+TBVsimp <- lm(BrainSeg_No_Vent ~ Age + Sex, data=Vol.df)
+TBVageres <- lm(BrainSeg_No_Vent ~ Age, data=Vol.df)
+TBVageres1 <- augment(TBVageres)
+TBVageres.df <- cbind(Vol.df, TBVageres1)
+TBVage <- t.test(.resid ~ Sex, data=TBVageres.df)
+
+TBVmods <- list(TBVsimpX, TBVsimp)
+
+## TBV extract measures
+F_age <- lapply(TBVmods, function(f) Anova(f)$"F value"[1])
+F_sex <- lapply(TBVmods, function(f) Anova(f)$"F value"[2])
+F_Xheight <-lapply(TBVmods, function(f) Anova(f)$"F value"[3])
+p_age <-lapply(TBVmods, function(f) Anova(f)$"Pr(>F)"[1])
+p_sex <-lapply(TBVmods, function(f) Anova(f)$"Pr(>F)"[2])
+p_Xheight <-lapply(TBVmods, function(f) Anova(f)$"Pr(>F)"[3])
+adjRsq <- sapply(TBVmods, function(f) summary(f)$adj.r.squared)
+padj_age <- p.adjust(p_age, method="fdr", n=5) ############
+padj_sex <- p.adjust(p_sex, method="fdr", n=5) ############
+padj_Xheight <- p.adjust(p_Xheight, method="fdr", n=5) ############
+
+TBVt <- TBVage$statistic
+TBVp <- TBVage$p.value
+TBVdof <- TBVage$parameter
+TBVpadj <- p.adjust(TBVp, method="fdr", n=5) ############
+TBVCohen <- (as.numeric(TBVt)*2)/sqrt(as.numeric(TBVdof))
+
+TBV_out <- as.data.frame(cbind(F_age, padj_age, F_sex, padj_sex, F_Xheight, padj_Xheight, adjRsq, TBVt, TBVpadj, TBVCohen))
+TBV_out <- apply(TBV_out,2,as.character)
+TBVout.file <- paste(outdir, "TBV.csv", sep="/")
+write.csv(TBV_out, file=TBVout.file, row.names = F)
+
+###### total GM and total WM 
+
+## overall simple with interactions
+overall_simpX  <- lapply(overall, function(i){
+  lm(get(i) ~ Age*Sex, data=Vol.df)
+})
+## overall simple
+overall_simp  <- lapply(overall, function(i){
+  lm(get(i) ~ Age +Sex, data=Vol.df)
+})
+
+### make df including residuals from TBV and height mods
+# Vol.res <- subset(Vol.df, ! is.na(Height))
+Vol.res <- Vol.df
+
+OVres_age  <- lapply(overall, function(i){
+  lm(get(i) ~ Age, data=Vol.res)
+})
+OVres_TBV  <- lapply(overall, function(i){
+  lm(get(i) ~ BrainSeg_No_Vent, data=Vol.res)
+})
+OVres_full  <- lapply(overall, function(i){
+  lm(get(i) ~ BrainSeg_No_Vent +Age, data=Vol.res)
+})
+
+for (i in 1:length(overall)) {
+  res <- augment(OVres_age[[i]])
+  names(res) <- paste0(overall[i],"age",names(res))
+  Vol.res <- cbind(Vol.res, as.data.frame(res[5]))
+}
+for (i in 1:length(overall)) {
+  res <- augment(OVres_TBV[[i]])
+  names(res) <- paste0(overall[i],"TBV",names(res))
+  Vol.res <- cbind(Vol.res, as.data.frame(res[5]))
+}
+for (i in 1:length(overall)) {
+  res <- augment(OVres_full[[i]])
+  names(res) <- paste0(overall[i],"Full",names(res))
+  Vol.res <- cbind(Vol.res, as.data.frame(res[6]))
+}
+
+OVres_age_ls <-Vol.res %>% select(contains("age.resid")) %>% names
+OVres_TBV_ls <-Vol.res %>% select(contains("TBV.resid")) %>% names
+OVres_full_ls <-Vol.res %>% select(contains("Full.resid")) %>% names
+
+overall_age  <- lapply(OVres_age_ls, function(i){
+  t.test(get(i) ~ Sex , data=Vol.res)
+})
+overall_TBV  <- lapply(OVres_TBV_ls, function(i){
+  lm(get(i) ~ Age + Sex , data=Vol.res)
+})
+overall_TBVX  <- lapply(OVres_TBV_ls, function(i){
+  lm(get(i) ~ Age*Sex , data=Vol.res)
+})
+overall_full  <- lapply(OVres_full_ls, function(i){
+  t.test(get(i) ~ Sex , data=Vol.res)
+})
+
+OVmodels <- c("overall_simpX", "overall_simp", "overall_TBV", "overall_TBVX")
+
+overall_out <- extract(OVmodels, 5) ################
+OV_simpX <- overall_out[[1]]
+OV_simp <- overall_out[[2]]
+OV_TBV <- overall_out[[3]]
+OV_TBVX <- overall_out[[4]]
+
+names(OV_simpX) <- paste0('simpX_',names(OV_simpX))
+names(OV_simp) <- paste0('simp_',names(OV_simp))
+names(OV_TBV) <- paste0('TBV_',names(OV_TBV))
+names(OV_TBVX) <- paste0('TBVX_',names(OV_TBVX))
+
+OVresid_age <- extractT(overall_age, 5) ############
+names(OVresid_age) <- paste0('AgeResid',names(OVresid_age))
+OVresid_full <- extractT(overall_full, 5) ############
+names(OVresid_full) <- paste0('FullResid',names(OVresid_full))
+
+### merge and write out
+OV_out <- cbind(OV_simpX, OV_simp, OV_TBV, OV_TBVX, OVresid_age, OVresid_full)
+OV_out <- apply(OV_out,2,as.character)
+rownames(OV_out) <- overall
+OVout.file <- paste(outdir, "overall.csv", sep="/")
+write.csv(OV_out, file=OVout.file, row.names = T)
+
+```
+# Overall variance testing
+```{r}
+# raw model
+Vol.M <- subset(Vol.res, Sex == "M")
+Vol.F <- subset(Vol.res, Sex == "F")
+
+TBVageres.M <- subset(TBVageres.df, Sex == "M")
+TBVageres.F <- subset(TBVageres.df, Sex == "F")
+
+# for TBV only
+TBV_var <- var.test(Vol.M$BrainSeg_No_Vent, Vol.F$BrainSeg_No_Vent)
+TBV_est <- TBV_var$estimate
+TBV_VRp <- TBV_var$p.value
+TBV_VRpadj <- p.adjust(TBV_VRp, method="fdr", n=5) ######
+
+TBVres_var <- var.test(TBVageres.M$BrainSeg_No_Vent, TBVageres.F$BrainSeg_No_Vent)
+TBVres_est <- TBVres_var$estimate
+TBVres_VRp <- TBVres_var$p.value
+TBVres_VRpadj <- p.adjust(TBV_VRp, method="fdr", n=5) ###########
+
+TBV_VR <- cbind(TBV_est, TBV_VRpadj,TBVres_est, TBVres_VRpadj) 
+OVoutTBV_VR.file <- paste(outdir, "TBV_VR.csv", sep="/")
+write.csv(TBV_VR, file=OVoutTBV_VR.file, row.names = T)
+
+# for the rest of the overall measures
+overall_var  <- lapply(overall, function(i){
+  var.test(Vol.M[[i]], Vol.F[[i]])
+})
+OVvar <- extract_var(overall_var, 5)###########
+
+# residual mods
+overall_var.resAge  <- lapply(OVres_age_ls, function(i){
+  var.test(Vol.M[[i]], Vol.F[[i]])
+})
+OVvar.resAge <- extract_var(overall_var.resAge, 5)###########
+
+overall_var.resTBV  <- lapply(OVres_TBV_ls, function(i){
+  var.test(Vol.M[[i]], Vol.F[[i]])
+})
+OVvar.resTBV <- extract_var(overall_var.resTBV, 5)###########
+
+overall_var.resfull  <- lapply(OVres_full_ls, function(i){
+  var.test(Vol.M[[i]], Vol.F[[i]])
+})
+OVvar.resfull <- extract_var(overall_var.resfull, 5)###########
+
+# write out
+names(OVvar) <- paste0('VR_',names(OVvar))
+names(OVvar.resAge) <- paste0('VR_Age_',names(OVvar.resAge))
+names(OVvar.resTBV) <- paste0('VR_TBV_',names(OVvar.resTBV))
+names(OVvar.resfull) <- paste0('VR_Full_',names(OVvar.resfull))
+
+OV_VR <- cbind(OVvar, OVvar.resAge, OVvar.resTBV, OVvar.resfull)
+OV_VR <- apply(OV_VR,2,as.character)
+rownames(OV_VR) <- overall
+OVoutVR.file <- paste(outdir, "overallVR.csv", sep="/")
+write.csv(OV_VR, file=OVoutVR.file, row.names = T)
+
+```
+# Overall Plots raw (for age plots) and minus age (box and vio)
+```{r}
+OVplots_age <- plot_age(overallincTBV, Vol.df)
+
+OV_to_graph_age <- c("BrainSeg_No_Vent", "TotalGrayage.resid", "CorticalWhiteMatterage.resid", "Cerebellum_Cortage.resid", "Cerebellum_WMage.resid") #########
+OVplots_box <- plot_box(OV_to_graph_age, Vol.res)
+OVplots_vio <- plot_vio(OV_to_graph_age, Vol.res) 
+
+plot_grid(plotlist=OVplots_age, align="hv", ncol = 3)  
+plot_grid(plotlist=OVplots_box, align="hv", ncol = 3)
+plot_grid(plotlist=OVplots_vio, align="hv", ncol = 3)
+
+OV2 <- plot_grid(plotlist=OVplots_age, align="hv", ncol = 3)  
+OV1 <- plot_grid(plotlist=OVplots_box, align="hv", ncol = 3)
+OV3 <- plot_grid(plotlist=OVplots_vio, align="hv", ncol = 3)
+
+OVfile.box <- paste(outdir, "OVgraphBox.png", sep="/")
+OVfile.age <- paste(outdir, "OVgraphAge.png", sep="/")
+OVfile.vio <- paste(outdir, "OVgraphVio.png", sep="/")
+
+ggsave(OVfile.box, OV1, dpi=300, width = 21, height = 14, units = "cm") #####
+ggsave(OVfile.age, OV2, dpi=300, width = 21, height = 14, units = "cm") #####
+ggsave(OVfile.vio, OV3, dpi=300, width = 21, height = 14, units = "cm") #####
+
+```
+# Overall Plots - minus TBV (age plots), minus age and TBV (vio)
+```{r}
+
+OV_to_graph_TBV <- c("BrainSeg_No_Vent", OVres_TBV_ls) 
+OV_to_graph_full <- c("BrainSeg_No_Vent", OVres_full_ls) 
+
+OVplots_age.res <- plot_age(OV_to_graph_TBV, Vol.res)
+OVplots_vio.res <- plot_vio(OV_to_graph_full, Vol.res)
+
+plot_grid(plotlist=OVplots_age.res, align="hv", ncol = 3)
+plot_grid(plotlist=OVplots_vio.res, align="hv", ncol = 3)
+
+OV2.res <- plot_grid(plotlist=OVplots_age.res, align="hv", ncol =3)
+OV3.res <- plot_grid(plotlist=OVplots_vio.res, align="hv", ncol =3)
+
+OVfile.age.res <- paste(outdir, "OVgraphAgeRES.png", sep="/")
+OVfile.vio.res <- paste(outdir, "OVgraphVioRES.png", sep="/")
+
+ggsave(OVfile.age.res, OV2.res, dpi=300, width = 21, height = 14, units = "cm") ######
+ggsave(OVfile.vio.res, OV3.res, dpi=300, width = 21, height = 14, units = "cm") #########
+
+#alt config
+AltOV1 <- plot_grid((OVplots_vio[[1]] + ylab("Total Brain Volume")), (OVplots_vio[[2]]+ ylab("Cerebral Grey Matter")), 
+                    (OVplots_vio[[3]]+ ylab("Cerebral White Matter")), (OVplots_vio[[4]]+ ylab("Cerebellar Grey Matter")), 
+                    (OVplots_vio[[5]]+ ylab("Cerebellar White Matter")), NULL ,(OVplots_vio.res[[2]]+ ylab("Cerebral Grey Matter")),  
+                    (OVplots_vio.res[[3]]+ ylab("Cerebral White Matter")), (OVplots_vio.res[[4]]+ ylab("Cerebellar Grey Matter")),  
+                    (OVplots_vio.res[[5]]+ ylab("Cerebellar White Matter")), align="hv", ncol =5, 
+                    labels=c('A', 'B', 'C', 'D', 'E', ' ', 'F', 'G', 'H', 'I', 'J'), label_size=10)
+AltOV2 <- plot_grid((OVplots_age[[1]]+ ylab("Total Brain Volume")), (OVplots_age[[2]]+ ylab("Cerebral Grey Matter")), 
+                    (OVplots_age[[3]]+ ylab("Cerebral White Matter")), (OVplots_age[[4]]+ ylab("Cerebellar Grey Matter")), 
+                    (OVplots_age[[5]]+ ylab("Cerebellar White Matter")), NULL, (OVplots_age.res[[2]]+ ylab("Cerebral Grey Matter")), 
+                    (OVplots_age.res[[3]]+ ylab("Cerebral White Matter")), (OVplots_age.res[[4]]+ ylab("Cerebellar Grey Matter")), 
+                    (OVplots_age.res[[5]]+ ylab("Cerebellar White Matter")), align="hv", ncol =5, 
+                    labels=c('A', 'B', 'C', 'D', 'E', ' ', 'F', 'G', 'H', 'I', 'J'), label_size=10)
+
+OVfile.alt1 <- paste(outdir, "OVgraphVio_comb.png", sep="/")
+OVfile.alt2 <- paste(outdir, "OVgraphAge_comb.png", sep="/")
+
+ggsave(OVfile.alt1, AltOV1, dpi=300, width = 21, height = 8, units = "cm")
+ggsave(OVfile.alt2, AltOV2, dpi=300, width = 30, height = 12, units = "cm")
+
+```
+# sub cortical stats mean 
+```{r}
+## Stats sub cort
+
+## SubCort simple with interactions
+subCort_simpX  <- lapply(SubCortLR, function(i){
+  lm(get(i) ~ Age*Sex, data=Vol.df)
+})
+
+## SubCort simple
+subCort_simp  <- lapply(SubCortLR, function(i){
+  lm(get(i) ~ Age +Sex, data=Vol.df)
+})
+
+### make df including residuals from TBV 
+SC.res <- Vol.df
+SCres_age  <- lapply(SubCortLR, function(i){
+  lm(get(i) ~ Age, data=SC.res)
+})
+SCres_TBV  <- lapply(SubCortLR, function(i){
+  lm(get(i) ~ BrainSeg_No_Vent, data=SC.res)
+})
+SCres_Full  <- lapply(SubCortLR, function(i){
+  lm(get(i) ~ BrainSeg_No_Vent + Age, data=SC.res)
+})
+
+for (i in 1:length(SubCortLR)) {
+  res <- augment(SCres_age[[i]])
+  names(res) <- paste0(SubCortLR[i],"age",names(res))
+  SC.res <- cbind(SC.res, as.data.frame(res[5]))
+}
+
+for (i in 1:length(SubCortLR)) {
+  res <- augment(SCres_TBV[[i]])
+  names(res) <- paste0(SubCortLR[i],"TBV",names(res))
+  SC.res <- cbind(SC.res, as.data.frame(res[5]))
+}
+
+for (i in 1:length(SubCortLR)) {
+  res <- augment(SCres_Full[[i]])
+  names(res) <- paste0(SubCortLR[i],"Full",names(res))
+  SC.res <- cbind(SC.res, as.data.frame(res[6]))
+}
+
+SCres_age_ls <-SC.res %>% select(contains("age.resid")) %>% names
+SCres_TBV_ls <-SC.res %>% select(contains("TBV.resid")) %>% names
+SCres_full_ls <-SC.res %>% select(contains("Full.resid")) %>% names
+
+subCort_age  <- lapply(SCres_age_ls, function(i){
+  t.test(get(i) ~ Sex , data=SC.res)
+})
+subCort_TBV  <- lapply(SCres_TBV_ls, function(i){
+  lm(get(i) ~ Age + Sex , data=SC.res)
+})
+subCort_TBVX  <- lapply(SCres_TBV_ls, function(i){
+  lm(get(i) ~ Age*Sex , data=SC.res)
+})
+subCort_full  <- lapply(SCres_full_ls, function(i){
+  t.test(get(i) ~ Sex , data=SC.res)
+})
+
+## SubCort hemi
+subCort_hemi  <- lapply(SubCort, function(i){
+  lmer(get(i) ~ Age + Sex*hemi + (1|Subject), data=Vol.hemi)
+})
+
+SCmodels <- c("subCort_simpX", "subCort_simp", "subCort_TBV", "subCort_TBVX")
+
+numSC=length(SubCortLR) #set how many corrections
+subcort_out <- extract(SCmodels, numSC)
+SC_simpX <- subcort_out[[1]]
+SC_simp <- subcort_out[[2]]
+SC_TBV <- subcort_out[[3]]
+SC_TBVX <- subcort_out[[4]]
+SC_hemi <- extract_lmer(subCort_hemi) 
+
+names(SC_simpX) <- paste0('simpX_',names(SC_simpX))
+names(SC_simp) <- paste0('simp_',names(SC_simp))
+names(SC_TBV) <- paste0('TBV_',names(SC_TBV))
+names(SC_TBVX) <- paste0('TBVX_',names(SC_TBVX))
+names(SC_hemi) <- paste0('hemi_',names(SC_hemi)) 
+
+SCresid_age <- extractT(subCort_age, numSC)
+names(SCresid_age) <- paste0('AgeResid_',names(SCresid_age))
+SCresid_full <- extractT(subCort_full, numSC)
+names(SCresid_full) <- paste0('FullResid_',names(SCresid_full))
+
+## merge and write out
+SC_out <- cbind(SC_simpX, SC_simp, SC_TBV, SC_TBVX, SCresid_age, SCresid_full, SC_hemi) 
+SC_out <- apply(SC_out,2,as.character)
+rownames(SC_out) <- SubCortLR
+SCout.file <- paste(outdir, "SC.csv", sep="/")
+write.csv(SC_out, file=SCout.file, row.names = T)
+
+```
+# Subcortical variance testing
+```{r}
+# raw model
+# Vol.M <- subset(SC.res, Sex == "Male")
+# Vol.F <- subset(SC.res, Sex == "Female")
+
+SC.M.res <- subset(SC.res, Sex == "M") ##SC.res made above includes residuals 
+SC.F.res <- subset(SC.res, Sex == "F")
+
+SubCort_var  <- lapply(SubCortLR, function(i){
+  var.test(SC.M.res[[i]], SC.F.res[[i]])
+})
+SCvar <- extract_var(SubCort_var, numSC)
+
+SubCort_var.resAge  <- lapply(SCres_age_ls, function(i){
+  var.test(SC.M.res[[i]], SC.F.res[[i]])
+})
+SCvar.resAge <- extract_var(SubCort_var.resAge, numSC)
+
+SubCort_var.resTBV  <- lapply(SCres_TBV_ls, function(i){
+  var.test(SC.M.res[[i]], SC.F.res[[i]])
+})
+SCvar.resTBV <- extract_var(SubCort_var.resTBV, numSC)
+
+SubCort_var.resfull  <- lapply(SCres_full_ls, function(i){
+  var.test(SC.M.res[[i]], SC.F.res[[i]])
+})
+SCvar.resfull <- extract_var(SubCort_var.resfull, numSC)
+
+# write out
+names(SCvar) <- paste0('VR_',names(SCvar))
+names(SCvar.resAge) <- paste0('VR_Age_',names(SCvar.resAge))
+names(SCvar.resTBV) <- paste0('VR_TBV_',names(SCvar.resTBV))
+names(SCvar.resfull) <- paste0('VR_Full_',names(SCvar.resfull))
+
+SC_VR <- cbind(SCvar, SCvar.resAge, SCvar.resTBV, SCvar.resfull)
+SC_VR <- apply(SC_VR,2,as.character)
+rownames(SC_VR) <- SubCortLR
+SCoutVR.file <- paste(outdir, "SC_VR.csv", sep="/")
+write.csv(SC_VR, file=SCoutVR.file, row.names = T)
+
+```
+
+# Subcortical Plots - raw (for age plots) and minus age (box and vio)
+```{r}
+# make df with hemi and residual data
+SC.R.res <- SC.res %>% select(starts_with("rh_")) %>% select(ends_with("resid")) %>% cbind(SC.res[1])
+colnames(SC.R.res) <- sub("rh_", "", colnames(SC.R.res)) 
+SC.R.res$hemi <- "right" 
+
+SC.L.res <- SC.res %>% select(starts_with("lh_")) %>% select(ends_with("resid")) %>% cbind(SC.res[1])
+colnames(SC.L.res) <- sub("lh_", "", colnames(SC.L.res)) 
+SC.L.res$hemi <- "left" 
+
+SC.hemi.res <- rbind(SC.R.res, SC.L.res)
+SC.hemi.res <- merge(SC.hemi.res, all[c("Subject", "Sex", "Age")], by=("Subject")) 
+
+#make lists of regions based on residuals
+SC_to_graph_full <-SC.hemi.res %>% select(contains("Full.resid")) %>% names
+SC_to_graph_TBV <-SC.hemi.res %>% select(contains("TBV.resid")) %>% names
+SC_to_graph_age <-SC.hemi.res %>% select(contains("age.resid")) %>% names
+
+#plot 
+SCplots_age <- plot_age_hemi(SubCort, Vol.hemi)
+SCplots_box <- plot_box_hemi(SC_to_graph_age, SC.hemi.res)
+SCplots_vio <- plot_vio_hemi(SC_to_graph_age, SC.hemi.res)
+
+# check what they look like
+plot_grid(plotlist=SCplots_box, align="hv", ncol =3)
+plot_grid(plotlist=SCplots_age, align="hv", ncol =2)
+plot_grid(plotlist=SCplots_vio, align="hv", ncol =3)
+
+# set arrangement
+SC1 <- plot_grid(plotlist=SCplots_box, align="hv", ncol =3)
+SC2 <- plot_grid(plotlist=SCplots_age, align="hv", ncol =2)
+SC3 <- plot_grid(plotlist=SCplots_vio, align="hv", ncol =3)
+
+#set file names
+SCfile.box <- paste(outdir, "SCgraphBox.png", sep="/")
+SCfile.age <- paste(outdir, "SCgraphAge.png", sep="/")
+SCfile.vio <- paste(outdir, "SCgraphVio.png", sep="/")
+
+#save graphs
+ggsave(SCfile.box, SC1, dpi=300, width = 21, height = 17.82, units = "cm")
+ggsave(SCfile.age, SC2, dpi=300, width = 21, height = 24, units = "cm")
+ggsave(SCfile.vio, SC3, dpi=300, width = 21, height = 17.82, units = "cm")
+
+```
+# Subcortical Plots - minus TBV (age plots), minus age and TBV (vio)
+```{r}
+#plot 
+SCplots_age.res <- plot_age_hemi(SC_to_graph_TBV, SC.hemi.res)
+SCplots_vio.res <- plot_vio_hemi(SC_to_graph_full, SC.hemi.res)
+
+#check config
+plot_grid(plotlist=SCplots_age.res, align="hv", ncol = 3)
+plot_grid(plotlist=SCplots_vio.res, align="hv", ncol = 3)
+
+#set config
+SC2.res <- plot_grid(plotlist=SCplots_age.res, align="hv", ncol =2)
+SC3.res <- plot_grid(plotlist=SCplots_vio.res, align="hv", ncol =3)
+
+#set file names
+SCfile.age.res <- paste(outdir, "SCgraphAgeRES.png", sep="/")
+SCfile.vio.res <- paste(outdir, "SCgraphVioRES.png", sep="/")
+
+#save
+ggsave(SCfile.age.res, SC2.res, dpi=300, width = 21, height = 24, units = "cm")
+ggsave(SCfile.vio.res, SC3.res, dpi=300, width = 21, height = 17.82, units = "cm")
+
+
+#alt config combining with and without TBV
+AltSC1 <- plot_grid((SCplots_vio[[1]] + ylab("Thalamus")), (SCplots_vio.res[[1]]+ ylab("Thalamus")), 
+                    (SCplots_vio[[2]] +ylab("Caudate")), (SCplots_vio.res[[2]] +ylab("Caudate")), 
+                    (SCplots_vio[[3]] +ylab("Putamen")), (SCplots_vio.res[[3]] +ylab("Putamen")),
+                    (SCplots_vio[[4]] +ylab("Pallidum")), (SCplots_vio.res[[4]] +ylab("Pallidum")),
+                    (SCplots_vio[[5]] +ylab("Hippocampus")), (SCplots_vio.res[[5]] +ylab("Hippocampus")),
+                    (SCplots_vio[[6]] +ylab("Amygdala")), (SCplots_vio.res[[6]] +ylab("Amygdala")),
+                    (SCplots_vio[[7]] +ylab("Nucleus Accumbens")), (SCplots_vio.res[[7]] +ylab("Nucleus Accumbens")), align="hv", ncol =2)
+
+AltSC3 <- plot_grid((SCplots_vio[[1]] + ylab("Thalamus")),  (SCplots_vio[[2]] +ylab("Caudate")),
+                     (SCplots_vio[[3]] +ylab("Putamen")),  (SCplots_vio[[4]] +ylab("Pallidum")),
+                    (SCplots_vio[[5]] +ylab("Hippocampus")),(SCplots_vio[[6]] +ylab("Amygdala")), 
+                    (SCplots_vio[[7]] +ylab("Nucleus Accumbens")),(SCplots_vio.res[[1]]+ ylab("Thalamus")), 
+                    (SCplots_vio.res[[2]] +ylab("Caudate")), (SCplots_vio.res[[3]] +ylab("Putamen")),
+                    (SCplots_vio.res[[4]] +ylab("Pallidum")), (SCplots_vio.res[[5]] +ylab("Hippocampus")),
+                    (SCplots_vio.res[[6]] +ylab("Amygdala")), (SCplots_vio.res[[7]] +ylab("Nucleus Accumbens")), align="hv", ncol =7)
+
+
+AltSC2 <- plot_grid((SCplots_age[[1]] +ylab("Thalamus")), (SCplots_age.res[[1]] + ylab("Thalamus")),
+                    (SCplots_age[[2]] +ylab("Caudate")), (SCplots_age.res[[2]] +ylab("Caudate")), 
+                    (SCplots_age[[3]] +ylab("Putamen")), (SCplots_age.res[[3]] +ylab("Putamen")),
+                    (SCplots_age[[4]] +ylab("Pallidum")), (SCplots_age.res[[4]] +ylab("Pallidum")), 
+                    (SCplots_age[[5]] +ylab("Hippocampus")), (SCplots_age.res[[5]] +ylab("Hippocampus")), 
+                    (SCplots_age[[6]] +ylab("Amygdala")), (SCplots_age.res[[6]] +ylab("Amygdala")),
+                    (SCplots_age[[7]] +ylab("Nucleus Accumbens")), (SCplots_age.res[[7]] +ylab("Nucleus Accumbens")), align="hv", ncol =2)
+
+SCfile.alt1 <- paste(outdir, "SCgraphVio_comb.png", sep="/")
+SCfile.alt2 <- paste(outdir, "SCgraphAge_comb.png", sep="/")
+SCfile.alt3 <- paste(outdir, "SCgraphVio_comb2.png", sep="/")
+
+ggsave(SCfile.alt1, AltSC1, dpi=300, width = 16, height = 29.7, units = "cm")
+ggsave(SCfile.alt2, AltSC2, dpi=300, width = 21, height = 29.7, units = "cm")
+ggsave(SCfile.alt3, AltSC3, dpi=300, width = 29.7, height = 8, units = "cm")
+
+### just to get a legend
+# leg <- ggplot(Vol.hemi.res, aes(x= hemi, fill = Sex, y= ThalamusProperFull.resid)) + geom_split_violin() 
+# leg.file <- paste(outdir, "legend.png", sep="/") 
+# ggsave(leg.file, leg, dpi=300, width = 16, height = 16, units = "cm")
+
+```
+# subcortical atlas plot
+```{r}
+areaSC <- c("Thalamus Proper", "Caudate", "Putamen", "Pallidum", "Hippocampus", "Amygdala", "Accumbens")
+leftSC <- cbind(areaSC, "left")
+rightSC <- cbind(areaSC, "right")
+hemisSC <- rbind(leftSC, rightSC) 
+colnames(hemisSC) <- c("area", "hemi")
+
+###### for VR
+SCplotVR <- as.data.frame(SC_VR, stringsAsFactors = F) %>% cbind(hemisSC)
+
+#select sig
+SCplotVR_sig.raw <- subset(SCplotVR, as.numeric(VR_Age_padj_VR) < 0.05)
+SCplotVR_sig.cor <- subset(SCplotVR, as.numeric(VR_Full_padj_VR) < 0.05)
+
+#plot
+SCa <- ggseg(SCplotVR_sig.raw, atlas="aseg", mapping=aes(fill=as.numeric(VR_Age_VR)), colour="black", size=0.4) +
+  scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), 
+                       breaks=seq(1,2.81,by=0.5)) + theme(axis.title.x = element_blank()) +
+                        guides(fill=guide_colorbar(title="VR", 
+                        title.position = "left", label.theme = element_text(angle = 0, size= 8))) 
+
+SCb <- ggseg(SCplotVR_sig.cor, atlas="aseg", mapping=aes(fill=as.numeric(VR_Full_VR)), colour="black", size=0.4) +
+  scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), 
+                       breaks=seq(1,2.81,by=0.5)) + theme(axis.title.x = element_blank()) +
+                        guides(fill=guide_colorbar(title="VR", 
+                        title.position = "left", label.theme = element_text(angle = 0, size= 8))) 
+
+#arrange
+plot_grid(SCa, SCb, align="hv", ncol = 1, labels=c('A', 'B'),label_size=10)
+SC_VR_plot <- plot_grid(SCa, SCb, align="hv", ncol = 1, labels=c('A', 'B'), label_size=10)
+
+#names and save
+SC_VR_plot.file <- paste(outdir, "SCatlasVR.png", sep="/")
+ggsave(SC_VR_plot.file, SC_VR_plot, dpi=300, width = 21, height = 12, units = "cm")
+
+##mean
+SCplot <- as.data.frame(SC_out, stringsAsFactors = F) %>% cbind(hemisSC)
+#select sig
+SCplot_sig.raw <- subset(SCplot, as.numeric(AgeResid_Padj) < 0.05)
+SCplot_sig.cor <- subset(SCplot, as.numeric(FullResid_Padj) < 0.05)
+
+#plot
+SCc <- ggseg(SCplot_sig.raw, atlas="aseg", mapping=aes(fill=as.numeric(AgeResid_Cohen)), colour="black", size=0.4) +
+  scale_fill_gradient2(low="#0033FF",mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), 
+                       breaks=seq(-1,1,by=1)) + theme(axis.title.x = element_blank()) + 
+  guides(fill=guide_colorbar(title="Cohen's d", title.position = "left", label.theme = element_text(angle = 0, size= 8)))
+
+SCd <- ggseg(SCplot_sig.cor, atlas="aseg", mapping=aes(fill=as.numeric(FullResid_Cohen)), colour="black", size=0.4) +
+  scale_fill_gradient2(low="#0033FF",mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), 
+                       breaks=seq(-1,1,by=1)) + theme(axis.title.x = element_blank()) + 
+  guides(fill=guide_colorbar(title="Cohen's d", title.position = "left", label.theme = element_text(angle = 0, size= 8)))
+
+#arrange
+plot_grid(SCc, SCd, align="hv", ncol = 1, labels=c('A', 'B'),label_size=10)
+SC_plot <- plot_grid(SCc, SCd, align="hv", ncol = 1, labels=c('A', 'B'), label_size=10)
+
+#names and save
+SC_plot.file <- paste(outdir, "SCatlas.png", sep="/")
+ggsave(SC_plot.file, SC_plot, dpi=300, width = 21, height = 12, units = "cm")
+```
+
+# stats cortical CT means
+```{r}
+
+## CT simple with interactions
+CortCT_simpX  <- lapply(CortLR, function(i){
+  lm(get(i) ~ Age*Sex, data=CT.df)
+})
+
+## Cort simple
+CortCT_simp  <- lapply(CortLR, function(i){
+  lm(get(i) ~ Age +Sex, data=CT.df)
+})
+
+### make df including residuals from TBV 
+CT.res <- CT.df
+CTres_age  <- lapply(CortLR, function(i){
+  lm(get(i) ~ Age, data=CT.res)
+})
+CTres_TBV  <- lapply(CortLR, function(i){
+  lm(get(i) ~ BrainSeg_No_Vent, data=CT.res)
+})
+CTres_Full  <- lapply(CortLR, function(i){
+  lm(get(i) ~ BrainSeg_No_Vent + Age, data=CT.res)
+})
+
+for (i in 1:length(CortLR)) {
+  res <- augment(CTres_age[[i]])
+  names(res) <- paste0(CortLR[i],"age",names(res))
+  CT.res <- cbind(CT.res, as.data.frame(res[5]))
+}
+
+for (i in 1:length(CortLR)) {
+  res <- augment(CTres_TBV[[i]])
+  names(res) <- paste0(CortLR[i],"TBV",names(res))
+  CT.res <- cbind(CT.res, as.data.frame(res[5]))
+}
+
+for (i in 1:length(CortLR)) {
+  res <- augment(CTres_Full[[i]])
+  names(res) <- paste0(CortLR[i],"Full",names(res))
+  CT.res <- cbind(CT.res, as.data.frame(res[6]))
+}
+
+CTres_age_ls <-CT.res %>% select(contains("age.resid")) %>% names
+CTres_TBV_ls <-CT.res %>% select(contains("TBV.resid")) %>% names
+CTres_full_ls <-CT.res %>% select(contains("Full.resid")) %>% names
+
+CT_age  <- lapply(CTres_age_ls, function(i){
+  t.test(get(i) ~ Sex , data=CT.res)
+})
+CortCT_TBV  <- lapply(CTres_TBV_ls, function(i){
+  lm(get(i) ~ Age + Sex , data=CT.res)
+})
+CortCT_TBVX  <- lapply(CTres_TBV_ls, function(i){
+  lm(get(i) ~ Age*Sex , data=CT.res)
+})
+CT_full  <- lapply(CTres_full_ls, function(i){
+  t.test(get(i) ~ Sex , data=CT.res)
+})
+
+## CT hemi
+CortCT_hemi  <- lapply(Cort, function(i){
+  lmer(get(i) ~ Age + Sex*hemi + (1|Subject), data=CT.hemi)
+})
+
+CTmodels <- c("CortCT_simpX", "CortCT_simp", "CortCT_TBV", "CortCT_TBVX")
+
+numCT=length(CortLR) #set how many corrections
+CT_out <- extract(CTmodels, numCT)
+CT_simpX <- CT_out[[1]]
+CT_simp <- CT_out[[2]]
+CT_TBV <- CT_out[[3]]
+CT_TBVX <- CT_out[[4]]
+CT_hemi <- extract_lmer(CortCT_hemi) 
+
+names(CT_simpX) <- paste0('simpX_',names(CT_simpX))
+names(CT_simp) <- paste0('simp_',names(CT_simp))
+names(CT_TBV) <- paste0('TBV_',names(CT_TBV))
+names(CT_TBVX) <- paste0('TBVX_',names(CT_TBVX))
+names(CT_hemi) <- paste0('hemi_',names(CT_hemi)) 
+
+CTresid_age <- extractT(CT_age, numCT)
+names(CTresid_age) <- paste0('AgeResid_',names(CTresid_age))
+CTresid_full <- extractT(CT_full, numCT)
+names(CTresid_full) <- paste0('FullResid_',names(CTresid_full))
+
+## merge and write out
+CT_out_tbl <- cbind(CT_simpX, CT_simp, CT_TBV, CT_TBVX, CTresid_age, CTresid_full, CT_hemi) 
+CT_out_tbl <- apply(CT_out_tbl,2,as.character)
+rownames(CT_out_tbl) <- CortLR
+CTout.file <- paste(outdir, "CT.csv", sep="/")
+write.csv(CT_out_tbl, file=CTout.file, row.names = T)
+
+```
+#  stats cortical CT variance
+```{r}
+CT.M <- subset(CT.df, Sex == "M") # 
+CT.F <- subset(CT.df, Sex == "F")
+
+CTCort_var  <- lapply(CortLR, function(i){
+  var.test(CT.M[[i]], CT.F[[i]])
+})
+CTvar <- extract_var(CTCort_var, numCT)
+
+CT.M.res <- subset(CT.res, Sex == "M") # 
+CT.F.res <- subset(CT.res, Sex == "F")
+
+CTCort_var.resAge  <- lapply(CTres_age_ls, function(i){
+  var.test(CT.M.res[[i]], CT.F.res[[i]])
+})
+CTvar.resAge <- extract_var(CTCort_var.resAge, numCT)
+
+CTCort_var.resTBV  <- lapply(CTres_TBV_ls, function(i){
+  var.test(CT.M.res[[i]], CT.F.res[[i]])
+})
+CTvar.resTBV <- extract_var(CTCort_var.resTBV, numCT)
+
+CTCort_var.resfull  <- lapply(CTres_full_ls, function(i){
+  var.test(CT.M.res[[i]], CT.F.res[[i]])
+})
+CTvar.resfull <- extract_var(CTCort_var.resfull, numCT)
+
+# write out
+names(CTvar) <- paste0('VR_',names(CTvar))
+names(CTvar.resAge) <- paste0('VR_Age_',names(CTvar.resAge))
+names(CTvar.resTBV) <- paste0('VR_TBV_',names(CTvar.resTBV))
+names(CTvar.resfull) <- paste0('VR_Full_',names(CTvar.resfull))
+
+CT_VR <- cbind(CTvar, CTvar.resAge, CTvar.resTBV, CTvar.resfull)
+CT_VR <- apply(CT_VR,2,as.character)
+rownames(CT_VR) <- CortLR
+CToutVR.file <- paste(outdir, "CT_VR.csv", sep="/")
+write.csv(CT_VR, file=CToutVR.file, row.names = T)
+
+```
+# plot CT - raw (for age plots) and minus age (box and vio)
+```{r}
+#mk df with hemis and resid data
+CT.R.res <- CT.res %>% select(starts_with("rh_")) %>% cbind(CT.res[1])
+colnames(CT.R.res) <- sub("rh_", "", colnames(CT.R.res)) 
+CT.R.res$hemi <- "right" 
+
+CT.L.res <- CT.res %>% select(starts_with("lh_")) %>% cbind(CT.res[1])
+colnames(CT.L.res) <- sub("lh_", "", colnames(CT.L.res)) 
+CT.L.res$hemi <- "left" 
+
+CT.hemi.res <- rbind(CT.R.res, CT.L.res)
+CT.hemi.res <- merge(CT.hemi.res, all[c("Subject", "Sex", "Age")], by=("Subject")) 
+
+#make lists of regions based on residuals
+CT_to_graph_age <-CT.hemi.res %>% dplyr::select(contains("age.resid")) %>% names
+CT_to_graph_TBV <-CT.hemi.res %>% dplyr::select(contains("TBV.resid")) %>% names
+CT_to_graph_full <-CT.hemi.res %>% dplyr::select(contains("Full.resid")) %>% names
+
+#plot
+CTplots_box <- plot_box_hemi(CT_to_graph_age, CT.hemi.res)
+CTplots_age <- plot_age_hemi(Cort, CT.hemi)
+CTplots_vio <- plot_vio_hemi(CT_to_graph_age, CT.hemi.res)
+
+#check arrangement
+marrangeGrob(grobs=CTplots_box, ncol =3, nrow =3)
+marrangeGrob(grobs=CTplots_age, ncol =2, nrow =2)
+marrangeGrob(grobs=CTplots_vio, ncol =3, nrow =3)
+
+#set arranglement
+CT1 <- marrangeGrob(grobs=CTplots_box, ncol =3, nrow =5)
+CT2 <- marrangeGrob(grobs=CTplots_age, ncol =2, nrow =4)
+CT3 <- marrangeGrob(grobs=CTplots_vio, ncol =3, nrow =5)
+
+#set file names
+CTfile.box <- paste(outdir, "CTgraphBox.pdf", sep="/")
+CTfile.age <- paste(outdir, "CTgraphAge.pdf", sep="/")
+CTfile.vio <- paste(outdir, "CTgraphVio.pdf", sep="/")
+
+#save
+ggsave(CTfile.box, CT1, dpi=300, width = 21, height = 29.7, units = "cm")
+ggsave(CTfile.age, CT2, dpi=300, width = 21, height = 29.7, units = "cm")
+ggsave(CTfile.vio, CT3, dpi=300, width = 21, height = 29.7, units = "cm")
+
+```
+# CT Plots - minus TBV (age plots), minus age and TBV (vio)
+```{r}
+#plot
+CTplots_age.res <- plot_age_hemi(CT_to_graph_TBV, CT.hemi.res)
+CTplots_vio.res <- plot_vio_hemi(CT_to_graph_full, CT.hemi.res)
+
+#check arrangment
+marrangeGrob(grobs=CTplots_age.res, ncol = 2, nrow =2)
+marrangeGrob(grobs=CTplots_vio.res, ncol = 3, nrow =3)
+
+#set arrangment
+CT2.res <- marrangeGrob(grobs=CTplots_age.res, ncol =2, nrow =4)
+CT3.res <- marrangeGrob(grobs=CTplots_vio.res, ncol =3, nrow =5)
+
+#set file names
+CTfile.age.res <- paste(outdir, "CTgraphAgeRES.pdf", sep="/")
+CTfile.vio.res <- paste(outdir, "CTgraphVioRES.pdf", sep="/")
+
+#save
+ggsave(CTfile.age.res, CT2.res, dpi=300, width = 21, height = 29.7, units = "cm")
+ggsave(CTfile.vio.res, CT3.res, dpi=300, width = 21, height = 29.7, units = "cm")
+
+```
+
+# CT atlas plot 
+```{r}
+#mk df 
+area <- c("banks superior temporal", "caudal anterior cingulate",  "caudal middle frontal", "cuneus", "entorhinal", "frontalpole", "fusiform",
+                   "inferior parietal", "inferior temporal", "insula", "isthmus cingulate", "lateraloccipital", "lateralorbito frontal", "lingual",
+                   "medial orbito frontal", "middle temporal", "para central", "parahippocampal", "pars opercularis", "pars orbitalis",
+                   "pars triangularis", "pericalcarine", "post central", "posterior cingulate", "pre central", "precuneus", 
+                   "rostral anterior cingulate", "rostral middle frontal", "superior frontal", "superior parietal", "superior temporal",
+                   "supramarginal", "temporal pole", "transverse temporal")
+left <- cbind(area, "left")
+right <- cbind(area, "right")
+hemis <- rbind(left, right) 
+colnames(hemis) <- c("area", "hemi")
+
+###### for VR
+CTplotVR <- as.data.frame(CT_VR, stringsAsFactors = F) %>% cbind(hemis)
+
+## subsets of data that was significant
+CTplotVR_sig.raw <- subset(CTplotVR, as.numeric(VR_Age_padj_VR) < 0.05)
+CTplotVR_sig.cor <- subset(CTplotVR, as.numeric(VR_Full_padj_VR) < 0.05)
+
+#plot
+CTa <- ggseg(CTplotVR_sig.raw, mapping=aes(fill=as.numeric(VR_Age_VR)), colour="black", size=0.4) +
+  scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), 
+                       breaks=seq(1,2.5,by=0.5)) + theme(axis.title.x = element_blank()) +
+                        guides(fill=guide_colorbar(title="VR", 
+                        title.position = "left", label.theme = element_text(angle = 0, size= 8))) 
+CTb <- ggseg(CTplotVR_sig.cor, mapping=aes(fill=as.numeric(VR_Full_VR)), colour="black", size=0.4) +
+  scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), 
+                       breaks=seq(1,2.5,by=0.5)) + theme(axis.title.x = element_blank()) +
+                        guides(fill=guide_colorbar(title="VR", 
+                        title.position = "left", label.theme = element_text(angle = 0, size= 8))) 
+
+#arrange
+plot_grid(CTa, CTb, align="hv", ncol = 1, labels=c('A', 'B'),label_size=10)
+CT_VR_plot <- plot_grid(CTa, CTb, align="hv", ncol = 1, labels=c('A', 'B'),label_size=10)
+
+#names and save
+CT_VR_plot.file <- paste(outdir, "CTatlasVR.png", sep="/")
+ggsave(CT_VR_plot.file, CT_VR_plot, dpi=300, width = 21, height = 12, units = "cm")
+
+####### for mean
+CTplot.df <- as.data.frame(CT_out_tbl, stringsAsFactors = F) %>% cbind(hemis)
+
+## subsets of data that was significant
+CTplot_sig.raw <- subset(CTplot.df, as.numeric(AgeResid_Padj) < 0.05)
+CTplot_sig.cor <- subset(CTplot.df, as.numeric(FullResid_Padj) < 0.05)
+
+#plot
+CTc <- ggseg(CTplot_sig.raw, mapping=aes(fill=as.numeric(AgeResid_Cohen)), colour="black", size=0.4) +
+  scale_fill_gradient2(low="#0033FF",mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), 
+                       breaks=seq(-1,1,by=1)) + theme(axis.title.x = element_blank()) + 
+  guides(fill=guide_colorbar(title="Cohen's d", title.position = "left", label.theme = element_text(angle = 0, size= 8))) 
+CTd <- ggseg(CTplot_sig.cor, mapping=aes(fill=as.numeric(FullResid_Cohen)), colour="black", size=0.4) +
+  scale_fill_gradient2(low="#0033FF",mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), 
+                       breaks=seq(-1,1,by=1)) + theme(axis.title.x = element_blank()) + 
+  guides(fill=guide_colorbar(title="Cohen's d", title.position = "left", label.theme = element_text(angle = 0, size= 8))) 
+
+#arrange
+plot_grid(CTc, CTd, align="hv", ncol = 1, labels=c('A', 'B'),label_size=10)
+CT_plot <- plot_grid(CTc, CTd, align="hv", ncol = 1, labels=c('A', 'B'),label_size=10)
+
+#name and save
+CT_plot.file <- paste(outdir, "CTatlas.png", sep="/")
+ggsave(CT_plot.file, CT_plot, dpi=300, width = 21, height = 12, units = "cm")
+
+### for age*sex interaction
+## subsets of data that was significant
+CTplotX_sig.raw <- subset(CTplot.df, as.numeric(simpX_padj_XTBVheight) < 0.05)
+CTplotX_sig.cor <- subset(CTplot.df, as.numeric(TBVX_padj_XTBVheight) < 0.05)
+CTplotAGE_sig.raw <- subset(CTplot.df, as.numeric(simp_padj_age) < 0.05)
+CTplotAGE_sig.cor <- subset(CTplot.df, as.numeric(TBV_padj_age) < 0.05)
+
+#plot
+CTe <- ggseg(CTplotX_sig.raw, mapping=aes(fill=as.numeric(simpX_F_XTBVheight)), colour="black", size=0.4) +
+  scale_fill_gradient(limits=c(0, 30), breaks=seq(0,30,by=15)) + theme(axis.title.x = element_blank()) + 
+  guides(fill=guide_colorbar(direction= "horizontal", title="F", title.position = "top", label.theme = element_text(angle = 90, size= 8))) 
+CTf <- ggseg(CTplotX_sig.cor, mapping=aes(fill=as.numeric(TBVX_F_XTBVheight)), colour="black", size=0.4) +
+  scale_fill_gradient(limits=c(0, 30), breaks=seq(0,30,by=15)) + theme(axis.title.x = element_blank()) + 
+  guides(fill=guide_colorbar(title="F", title.position = "left", label.theme = element_text(angle = 0, size= 8))) 
+
+#arrange
+plot_grid(CTe, CTf, align="hv", ncol = 1, labels=c('A', 'B'),label_size=10)
+CTX_plot <- plot_grid(CTe, CTf, align="hv", ncol = 1, labels=c('A', 'B'),label_size=10)
+
+#name and save
+CTX_plot.file <- paste(outdir, "CTageXsex.png", sep="/")
+ggsave(CTX_plot.file, CTX_plot, dpi=300, width = 21, height = 12, units = "cm")
+
+#plot
+CTg <- ggseg(CTplotAGE_sig.raw, mapping=aes(fill=as.numeric(simp_F_age)), colour="black", size=0.4) +
+  scale_fill_gradient(limits=c(0, 600), breaks=seq(0,600,by=100)) + theme(axis.title.x = element_blank()) + 
+  guides(fill=guide_colorbar(direction= "horizontal", title="F", title.position = "top", label.theme = element_text(angle = 90, size= 8))) 
+CTh <- ggseg(CTplotAGE_sig.cor, mapping=aes(fill=as.numeric(TBV_F_age)), colour="black", size=0.4) +
+  scale_fill_gradient(limits=c(0, 600), breaks=seq(0,600,by=100)) + theme(axis.title.x = element_blank()) + 
+  guides(fill=guide_colorbar(title="F", title.position = "left", label.theme = element_text(angle = 0, size= 8))) 
+
+#arrange
+plot_grid(CTg, CTh, align="hv", ncol = 1, labels=c('A', 'B'),label_size=10)
+CTAGE_plot <- plot_grid(CTg, CTh, align="hv", ncol = 1, labels=c('A', 'B'),label_size=10)
+
+#name and save
+CTAGE_plot.file <- paste(outdir, "CTatlasAGE.png", sep="/")
+ggsave(CTAGE_plot.file, CTAGE_plot, dpi=300, width = 21, height = 12, units = "cm")
+
+```
+# stats cortical SA mean
+```{r} 
+## SA simple with interactions
+CortSA_simpX  <- lapply(CortLR, function(i){
+  lm(get(i) ~ Age*Sex, data=SA.df)
+})
+
+## Cort simple
+CortSA_simp  <- lapply(CortLR, function(i){
+  lm(get(i) ~ Age +Sex, data=SA.df)
+})
+
+### make df including residuals from TBV 
+SA.res <- SA.df
+SAres_age  <- lapply(CortLR, function(i){
+  lm(get(i) ~ Age, data=SA.res)
+})
+SAres_TBV  <- lapply(CortLR, function(i){
+  lm(get(i) ~ BrainSeg_No_Vent, data=SA.res)
+})
+SAres_Full  <- lapply(CortLR, function(i){
+  lm(get(i) ~ BrainSeg_No_Vent + Age, data=SA.res)
+})
+
+for (i in 1:length(CortLR)) {
+  res <- augment(SAres_age[[i]])
+  names(res) <- paste0(CortLR[i],"age",names(res))
+  SA.res <- cbind(SA.res, as.data.frame(res[5]))
+}
+
+for (i in 1:length(CortLR)) {
+  res <- augment(SAres_TBV[[i]])
+  names(res) <- paste0(CortLR[i],"TBV",names(res))
+  SA.res <- cbind(SA.res, as.data.frame(res[5]))
+}
+
+for (i in 1:length(CortLR)) {
+  res <- augment(SAres_Full[[i]])
+  names(res) <- paste0(CortLR[i],"Full",names(res))
+  SA.res <- cbind(SA.res, as.data.frame(res[6]))
+}
+
+SAres_age_ls <-SA.res %>% select(contains("age.resid")) %>% names
+SAres_TBV_ls <-SA.res %>% select(contains("TBV.resid")) %>% names
+SAres_full_ls <-SA.res %>% select(contains("Full.resid")) %>% names
+
+SA_age  <- lapply(SAres_age_ls, function(i){
+  t.test(get(i) ~ Sex , data=SA.res)
+})
+CortSA_TBV  <- lapply(SAres_TBV_ls, function(i){
+  lm(get(i) ~ Age + Sex , data=SA.res)
+})
+CortSA_TBVX  <- lapply(SAres_TBV_ls, function(i){
+  lm(get(i) ~ Age*Sex , data=SA.res)
+})
+SA_full  <- lapply(SAres_full_ls, function(i){
+  t.test(get(i) ~ Sex , data=SA.res)
+})
+
+## SA hemi
+CortSA_hemi  <- lapply(Cort, function(i){
+  lmer(get(i) ~ Age + Sex*hemi + (1|Subject), data=SA.hemi)
+})
+
+SAmodels <- c("CortSA_simpX", "CortSA_simp", "CortSA_TBV", "CortSA_TBVX")
+
+numSA=length(CortLR) #set how many corrections
+SA_out <- extract(SAmodels, numSA)
+SA_simpX <- SA_out[[1]]
+SA_simp <- SA_out[[2]]
+SA_TBV <- SA_out[[3]]
+SA_TBVX <- SA_out[[4]]
+SA_hemi <- extract_lmer(CortSA_hemi) 
+
+names(SA_simpX) <- paste0('simpX_',names(SA_simpX))
+names(SA_simp) <- paste0('simp_',names(SA_simp))
+names(SA_TBV) <- paste0('TBV_',names(SA_TBV))
+names(SA_TBVX) <- paste0('TBVX_',names(SA_TBVX))
+names(SA_hemi) <- paste0('hemi_',names(SA_hemi)) 
+
+SAresid_age <- extractT(SA_age, numSA)
+names(SAresid_age) <- paste0('AgeResid_',names(SAresid_age))
+SAresid_full <- extractT(SA_full, numSA)
+names(SAresid_full) <- paste0('FullResid_',names(SAresid_full))
+
+## merge and write out
+SA_out_tbl <- cbind(SA_simpX, SA_simp, SA_TBV, SA_TBVX, SAresid_age, SAresid_full, SA_hemi) 
+SA_out_tbl <- apply(SA_out_tbl,2,as.character)
+rownames(SA_out_tbl) <- CortLR
+SAout.file <- paste(outdir, "SA.csv", sep="/")
+write.csv(SA_out_tbl, file=SAout.file, row.names = T)
+
+```
+# SA variance testing
+```{r}
+SA.M <- subset(SA.df, Sex == "M") # 
+SA.F <- subset(SA.df, Sex == "F")
+
+SACort_var  <- lapply(CortLR, function(i){
+  var.test(SA.M[[i]], SA.F[[i]])
+})
+SAvar <- extract_var(SACort_var, numSA)
+
+SA.M.res <- subset(SA.res, Sex == "M") # 
+SA.F.res <- subset(SA.res, Sex == "F")
+
+SACort_var.resAge  <- lapply(SAres_age_ls, function(i){
+  var.test(SA.M.res[[i]], SA.F.res[[i]])
+})
+SAvar.resAge <- extract_var(SACort_var.resAge, numSA)
+
+SACort_var.resTBV  <- lapply(SAres_TBV_ls, function(i){
+  var.test(SA.M.res[[i]], SA.F.res[[i]])
+})
+SAvar.resTBV <- extract_var(SACort_var.resTBV, numSA)
+
+SACort_var.resfull  <- lapply(SAres_full_ls, function(i){
+  var.test(SA.M.res[[i]], SA.F.res[[i]])
+})
+SAvar.resfull <- extract_var(SACort_var.resfull, numSA)
+
+# write out
+names(SAvar) <- paste0('VR_',names(SAvar))
+names(SAvar.resAge) <- paste0('VR_Age_',names(SAvar.resAge))
+names(SAvar.resTBV) <- paste0('VR_TBV_',names(SAvar.resTBV))
+names(SAvar.resfull) <- paste0('VR_Full_',names(SAvar.resfull))
+
+SA_VR <- cbind(SAvar, SAvar.resAge, SAvar.resTBV, SAvar.resfull)
+SA_VR <- apply(SA_VR,2,as.character)
+rownames(SA_VR) <- CortLR
+SAoutVR.file <- paste(outdir, "SA_VR.csv", sep="/")
+write.csv(SA_VR, file=SAoutVR.file, row.names = T)
+
+```
+# plot SA - raw (for age plots) and minus age (box and vio)
+```{r}
+#mk df with hemis and resids
+SA.R.res <- SA.res %>% select(starts_with("rh_")) %>% cbind(SA.res[1])
+colnames(SA.R.res) <- sub("rh_", "", colnames(SA.R.res)) 
+SA.R.res$hemi <- "right" 
+
+SA.L.res <- SA.res %>% select(starts_with("lh_")) %>% cbind(SA.res[1])
+colnames(SA.L.res) <- sub("lh_", "", colnames(SA.L.res)) 
+SA.L.res$hemi <- "left" 
+
+SA.hemi.res <- rbind(SA.R.res, SA.L.res)
+SA.hemi.res <- merge(SA.hemi.res, all[c("Subject", "Sex", "Age")], by=("Subject")) 
+
+#make lits of variable names to graph based of resids
+SA_to_graph_age <-SA.hemi.res %>% dplyr::select(contains("age.resid")) %>% names
+SA_to_graph_TBV <-SA.hemi.res %>% dplyr::select(contains("TBV.resid")) %>% names
+SA_to_graph_full <-SA.hemi.res %>% dplyr::select(contains("Full.resid")) %>% names
+
+#plot
+SAplots_box <- plot_box_hemi(SA_to_graph_age, SA.hemi.res)
+SAplots_age <- plot_age_hemi(Cort, SA.hemi)
+SAplots_vio <- plot_vio_hemi(SA_to_graph_age, SA.hemi.res)
+
+#check arrangement
+marrangeGrob(grobs=SAplots_box, ncol =3, nrow =3)
+marrangeGrob(grobs=SAplots_age, ncol =2, nrow =2)
+marrangeGrob(grobs=SAplots_vio, ncol =3, nrow =3)
+
+#set arrangement
+SA1 <- marrangeGrob(grobs=SAplots_box, ncol =3, nrow =5)
+SA2 <- marrangeGrob(grobs=SAplots_age, ncol =2, nrow =4)
+SA3 <- marrangeGrob(grobs=SAplots_vio, ncol =3, nrow =5)
+
+#set file names
+SAfile.box <- paste(outdir, "SAgraphBox.pdf", sep="/")
+SAfile.age <- paste(outdir, "SAgraphAge.pdf", sep="/")
+SAfile.vio <- paste(outdir, "SAgraphVio.pdf", sep="/")
+
+#save
+ggsave(SAfile.box, SA1, dpi=300, width = 21, height = 29.7, units = "cm")
+ggsave(SAfile.age, SA2, dpi=300, width = 21, height = 29.7, units = "cm")
+ggsave(SAfile.vio, SA3, dpi=300, width = 21, height = 29.7, units = "cm")
+
+```
+
+# SA Plots - minus TBV (age plots), minus age and TBV (vio)
+```{r}
+#plot
+SAplots_age.res <- plot_age_hemi(SA_to_graph_TBV, SA.hemi.res)
+SAplots_vio.res <- plot_vio_hemi(SA_to_graph_full, SA.hemi.res)
+
+#arrange
+marrangeGrob(grobs=SAplots_age.res, ncol = 2, nrow =2)
+marrangeGrob(grobs=SAplots_vio.res, ncol = 3, nrow =3)
+
+#set arrangement
+SA2.res <- marrangeGrob(grobs=SAplots_age.res, ncol =2, nrow =4)
+SA3.res <- marrangeGrob(grobs=SAplots_vio.res, ncol =3, nrow =5)
+
+#set file names
+SAfile.age.res <- paste(outdir, "SAgraphAgeRES.pdf", sep="/")
+SAfile.vio.res <- paste(outdir, "SAgraphVioRES.pdf", sep="/")
+
+#save
+ggsave(SAfile.age.res, SA2.res, dpi=300, width = 21, height = 29.7, units = "cm")
+ggsave(SAfile.vio.res, SA3.res, dpi=300, width = 21, height = 29.7, units = "cm")
+
+```
+
+# SA atlas plot 
+```{r}
+area <- c("banks superior temporal", "caudal anterior cingulate",  "caudal middle frontal", "cuneus", "entorhinal", "frontal pole", "fusiform",
+                   "inferior parietal", "inferior temporal", "insula", "isthmus cingulate", "lateraloccipital", "lateralorbito frontal", "lingual",
+                   "medial orbito frontal", "middle temporal", "para central", "parahippocampal", "pars opercularis", "pars orbitalis",
+                   "pars triangularis", "pericalcarine", "post central", "posterior cingulate", "pre central", "precuneus", 
+                   "rostral anterior cingulate", "rostral middle frontal", "superior frontal", "superior parietal", "superior temporal",
+                   "supramarginal", "temporal pole", "transverse temporal")
+
+left <- cbind(area, "left")
+right <- cbind(area, "right")
+hemis <- rbind(left, right) 
+colnames(hemis) <- c("area", "hemi")
+
+SAplotVR <- as.data.frame(SA_VR, stringsAsFactors = F) %>% cbind(hemis)
+
+## select subset of sig data
+SAplotVR_sig.raw <- subset(SAplotVR, as.numeric(VR_Age_padj_VR) < 0.05)
+SAplotVR_sig.cor <- subset(SAplotVR, as.numeric(VR_Full_padj_VR) < 0.05)
+
+#plot
+SAa <- ggseg(SAplotVR_sig.raw, mapping=aes(fill=as.numeric(VR_Age_VR)), colour="black", size=0.4) +
+  scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81),
+                       breaks=seq(1,2.81,by=0.5)) + theme(axis.title.x = element_blank()) + 
+  guides(fill=guide_colorbar(title="VR", title.position = "left", label.theme = element_text(angle = 0, size= 8))) 
+SAb <- ggseg(SAplotVR_sig.cor, mapping=aes(fill=as.numeric(VR_Full_VR)), colour="black", size=0.4) +
+  scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81),
+                      breaks=seq(1,2.81,by=0.5)) + theme(axis.title.x = element_blank()) + 
+  guides(fill=guide_colorbar(title="VR", title.position = "left", label.theme = element_text(angle = 0, size= 8))) 
+
+#arrange
+plot_grid(SAa,SAb, align="hv", ncol = 1, labels=c('A', 'B'),label_size=10)
+SA_VR_plot <- plot_grid(SAa,SAb, align="hv", ncol = 1, labels=c('A', 'B'),label_size=10)
+
+#names and save
+SA_VR_plot.file <- paste(outdir, "SAatlasVR.png", sep="/")
+ggsave(SA_VR_plot.file, SA_VR_plot, dpi=300, width = 21, height = 12, units = "cm")
+
+####### for mean
+SAplot.df <- as.data.frame(SA_out_tbl, stringsAsFactors = F) %>% cbind(hemis)
+
+## subsets of data that was significant
+SAplot_sig.raw <- subset(SAplot.df, as.numeric(AgeResid_Padj) < 0.05)
+SAplot_sig.cor <- subset(SAplot.df, as.numeric(FullResid_Padj) < 0.05)
+
+#plot
+SAc <- ggseg(SAplot_sig.raw, mapping=aes(fill=as.numeric(AgeResid_Cohen)), colour="black", size=0.4) +
+  scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), 
+                      breaks=seq(-1,1,by=1)) + theme(axis.title.x = element_blank()) + 
+  guides(fill=guide_colorbar(title="Cohen's d", title.position = "left", label.theme = element_text(angle = 0, size= 8))) 
+SAd <- ggseg(SAplot_sig.cor, mapping=aes(fill=as.numeric(FullResid_Cohen)), colour="black", size=0.4) +
+  scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), 
+                      breaks=seq(-1,1,by=1)) + theme(axis.title.x = element_blank()) + 
+  guides(fill=guide_colorbar(title="Cohen's d", title.position = "left", label.theme = element_text(angle = 0, size= 8))) 
+
+#arrange
+plot_grid(SAc, SAd, align="hv", ncol = 1, labels=c('A', 'B'),label_size=10)
+SA_plot <- plot_grid(SAc, SAd, align="hv", ncol = 1, labels=c('A', 'B'),label_size=10)
+
+#name and save
+SA_plot.file <- paste(outdir, "SAatlas.png", sep="/")
+ggsave(SA_plot.file, SA_plot, dpi=300, width = 21, height = 12, units = "cm")
+
+
+######### for age
+## subsets of data that was significant
+SAplotAGE_sig.raw <- subset(SAplot.df, as.numeric(simp_padj_age) < 0.05)
+SAplotAGE_sig.cor <- subset(SAplot.df, as.numeric(TBV_padj_age) < 0.05)
+SAplotX_sig.raw <- subset(SAplot.df, as.numeric(simpX_padj_XTBVheight) < 0.05)
+SAplotX_sig.cor <- subset(SAplot.df, as.numeric(TBVX_padj_XTBVheight) < 0.05)
+
+#plot
+SAe <- ggseg(SAplotAGE_sig.raw, mapping=aes(fill=as.numeric(simp_F_age)), colour="black", size=0.4) +
+  scale_fill_gradient(limits=c(0, 120), breaks=seq(0,120,by=30)) + theme(axis.title.x = element_blank())+ 
+  guides(fill=guide_colorbar(title="F", direction = "horizontal", title.position = "top", label.theme = element_text(angle = 90, size= 8))) 
+SAf <- ggseg(SAplotAGE_sig.cor, mapping=aes(fill=as.numeric(TBV_F_age)), colour="black", size=0.4) +
+  scale_fill_gradient(limits=c(0, 120), breaks=seq(0,120,by=30)) + theme(axis.title.x = element_blank()) + 
+  guides(fill=guide_colorbar(title="F", title.position = "left", label.theme = element_text(angle = 0, size= 8))) 
+
+#arrange
+plot_grid(SAe, SAf, align="hv", ncol = 1, labels=c('A', 'B'),label_size=10)
+SA_plotAGE <- plot_grid(SAe, SAf, align="hv", ncol = 1, labels=c('A', 'B'),label_size=10)
+
+#name and save
+SA_plotAGE.file <- paste(outdir, "SAatlasAGE.png", sep="/")
+ggsave(SA_plotAGE.file, SA_plotAGE, dpi=300, width = 21, height = 12, units = "cm")
+
+```
+
+# unit sphere stuff
+```{r}
+colnames(CT.res) <- paste0("CT_", colnames(CT.res))
+colnames(SA.res) <- paste0("SA_", colnames(SA.res))
+
+All.res <- merge(Vol.res, SC.res, by="Subject") %>% merge(CT.res, by.x="Subject", by.y="CT_Subject") %>% 
+  merge(SA.res, by.x="Subject", by.y="SA_Subject") %>% 
+  select(contains("Full.resid")) %>% cbind(Vol.res[c("Subject", "Age", "Sex")]) 
+
+Allres.file <- paste(outdir, "Allres.csv", sep="/")
+write.csv(All.res, file=Allres.file, row.names = T)
+
+```
+
+# Prep OASIS graphs for combining with other figures 
+```{r}
+
+#plot required OASIS graphs without legends (the same is done for other data sets)
+##SC
+OASIS_SCraw <- ggseg(SCplot_sig.raw, atlas="aseg", mapping=aes(fill=as.numeric(AgeResid_Cohen)), colour="black", size=0.4) +
+  scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=1)) + 
+  theme(legend.position="none", axis.title.x = element_blank())
+OASIS_SCcor <- ggseg(SCplot_sig.cor, atlas="aseg", mapping=aes(fill=as.numeric(FullResid_Cohen)), colour="black", size=0.4) +
+  scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=1)) + 
+  theme(legend.position="none", axis.title.x = element_blank())
+
+OASIS_SCrawVR <- ggseg(SCplotVR_sig.raw, atlas="aseg", mapping=aes(fill=as.numeric(VR_Age_VR)), colour="black", size=0.4) +
+    scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
+  theme(legend.position="none", axis.title.x = element_blank())
+OASIS_SCcorVR <- ggseg(SCplotVR_sig.cor,atlas="aseg",  mapping=aes(fill=as.numeric(VR_Full_VR)), colour="black", size=0.4) +
+  scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
+  theme(legend.position="none", axis.title.x = element_blank())
+
+##CT
+OASIS_CTraw <- ggseg(CTplot_sig.raw, mapping=aes(fill=as.numeric(AgeResid_Cohen)), colour="black", size=0.4) +
+  scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=1)) + 
+  theme(legend.position="none", axis.title.x = element_blank())
+OASIS_CTcor <- ggseg(CTplot_sig.cor, mapping=aes(fill=as.numeric(FullResid_Cohen)), colour="black", size=0.4) +
+  scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=1)) + 
+  theme(legend.position="none", axis.title.x = element_blank())
+
+OASIS_CTrawVR <- ggseg(CTplotVR_sig.raw, mapping=aes(fill=as.numeric(VR_Age_VR)), colour="black", size=0.4) +
+  scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5)) + 
+  theme(legend.position="none", axis.title.x = element_blank())
+OASIS_CTcorVR <- ggseg(CTplotVR_sig.cor, mapping=aes(fill=as.numeric(VR_Full_VR)), colour="black", size=0.4) +
+  scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
+  theme(legend.position="none", axis.title.x = element_blank())
+
+OASIS_CTrawAGExSEX <- ggseg(CTplotX_sig.raw, mapping=aes(fill=as.numeric(simpX_F_XTBVheight)), colour="black", size=0.4) +
+  scale_fill_gradient(limits=c(0, 30), breaks=seq(0,30,by=15)) + theme(legend.position="none", axis.title.x = element_blank()) 
+OASIS_CTcorAGExSEX <- ggseg(CTplotX_sig.cor, mapping=aes(fill=as.numeric(TBVX_F_XTBVheight)), colour="black", size=0.4) +
+  scale_fill_gradient(limits=c(0, 30), breaks=seq(0,30,by=15)) + theme(legend.position="none", axis.title.x = element_blank()) 
+
+OASIS_CTrawAGE <- ggseg(CTplotAGE_sig.raw, mapping=aes(fill=as.numeric(simp_F_age)), colour="black", size=0.4) +
+  scale_fill_gradient(limits=c(0, 600), breaks=seq(0,600,by=100)) + theme(legend.position="none", axis.title.x = element_blank()) 
+OASIS_CTcorAGE <- ggseg(CTplotAGE_sig.cor, mapping=aes(fill=as.numeric(TBV_F_age)), colour="black", size=0.4) +
+  scale_fill_gradient(limits=c(0, 600), breaks=seq(0,600,by=100)) + theme(legend.position="none", axis.title.x = element_blank()) 
+
+##SA
+OASIS_SAraw <- ggseg(SAplot_sig.raw, mapping=aes(fill=as.numeric(AgeResid_Cohen)), colour="black", size=0.4) +
+  scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=1)) + 
+  theme(legend.position="none", axis.title.x = element_blank())
+OASIS_SAcor <- ggseg(SAplot_sig.cor, mapping=aes(fill=as.numeric(FullResid_Cohen)), colour="black", size=0.4) +
+  scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=1)) + 
+  theme(legend.position="none", axis.title.x = element_blank())
+
+OASIS_SArawVR <- ggseg(SAplotVR_sig.raw, mapping=aes(fill=as.numeric(VR_Age_VR)), colour="black", size=0.4) +
+  scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
+  theme(legend.position="none", axis.title.x = element_blank())
+OASIS_SAcorVR <- ggseg(SAplotVR_sig.cor, mapping=aes(fill=as.numeric(VR_Full_VR)), colour="black", size=0.4) +
+  scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
+  theme(legend.position="none", axis.title.x = element_blank())
+  
+OASIS_SArawAGE <- ggseg(SAplotAGE_sig.raw, mapping=aes(fill=as.numeric(simp_F_age)), colour="black", size=0.4) +
+  scale_fill_gradient(limits=c(0, 120), breaks=seq(0,120,by=30)) + theme(legend.position="none", axis.title.x = element_blank())
+OASIS_SAcorAGE <- ggseg(SAplotAGE_sig.cor, mapping=aes(fill=as.numeric(TBV_F_age)), colour="black", size=0.4) +
+  scale_fill_gradient(limits=c(0, 120), breaks=seq(0,120,by=30)) + theme(legend.position="none", axis.title.x = element_blank()) 
+
+OASIS_SArawAGExSEX <- ggseg(SAplotX_sig.raw, mapping=aes(fill=as.numeric(simpX_F_XTBVheight)), colour="black", size=0.4) +
+  scale_fill_gradient(limits=c(0, 15), breaks=seq(0,15,by=5)) + theme(legend.position="none", axis.title.x = element_blank())
+OASIS_SAcorAGExSEX <- ggseg(SAplotX_sig.cor, mapping=aes(fill=as.numeric(TBVX_F_XTBVheight)), colour="black", size=0.4) +
+  scale_fill_gradient(limits=c(0, 15), breaks=seq(0,15,by=5)) + theme(legend.position="none", axis.title.x = element_blank()) 
+
+
+## rename OASIS OV & SC
+OASIS_OVplots_vio <- OVplots_vio
+OASIS_OVplots_vio.res <- OVplots_vio.res
+OASIS_OVplots_age <- OVplots_age
+OASIS_OVplots_age.res <- OVplots_age.res
+
+
+```

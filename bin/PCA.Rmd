@@ -1,0 +1,516 @@
+---
+title: "PCAs"
+author: "nforde"
+date: "March 26, 2019"
+output: html_document
+---
+
+## get libraries/set paths
+```{r}
+library(tidyverse)
+library(broom)
+library(knitr)
+library(car)
+library(cowplot)
+library(lme4)
+library(ggseg)
+library(gridExtra)
+library(reshape2)
+library(ggbiplot)
+
+## set all the paths
+#HCP
+HCP.res <- read.csv("/projects/nforde/HCP/stats/HCP/Allres.csv")
+PNC.res <- read.csv("/projects/nforde/HCP/stats/PNC/Allres.csv")
+OASIS.res <- read.csv("/projects/nforde/HCP/stats/OASIS/Allres.csv")
+
+HCP.norm <- HCP.res[c(2:length(HCP.res))]
+PNC.norm <- PNC.res[c(2:length(PNC.res))]
+OASIS.norm <- OASIS.res[c(2:length(OASIS.res))]
+
+outdir <- "/projects/nforde/HCP/stats/combined_figures"
+
+
+
+#some list of variable names to keep things easier later
+HCP.SC <- c("L_ThalamusProperFull.resid", "L_CaudateFull.resid", "L_PutamenFull.resid", "L_PallidumFull.resid",
+            "L_HippoFull.resid", "L_AmygdalaFull.resid", "L_AccumbensAreaFull.resid", "R_ThalamusProperFull.resid",
+            "R_CaudateFull.resid", "R_PutamenFull.resid", "R_PallidumFull.resid", "R_HippoFull.resid",
+            "R_AmygdalaFull.resid", "R_AccumbensAreaFull.resid")
+
+PNC.SC <- c("Left.Thalamus.ProperFull.resid", "Left.CaudateFull.resid", "Left.PutamenFull.resid",
+            "Left.PallidumFull.resid", "Left.HippocampusFull.resid", "Left.AmygdalaFull.resid",
+            "Left.Accumbens.areaFull.resid", "Right.Thalamus.ProperFull.resid", "Right.CaudateFull.resid",
+            "Right.PutamenFull.resid", "Right.PallidumFull.resid", "Right.HippocampusFull.resid",
+            "Right.AmygdalaFull.resid", "Right.Accumbens.areaFull.resid")
+
+OASIS.SC <- c("lh_Thalamus.ProperFull.resid", "lh_CaudateFull.resid", "lh_PutamenFull.resid", "lh_PallidumFull.resid",
+                                "lh_HippocampusFull.resid", "lh_AmygdalaFull.resid", "lh_Accumbens.areaFull.resid",
+                               "rh_Thalamus.ProperFull.resid", "rh_CaudateFull.resid", "rh_PutamenFull.resid",
+           "rh_PallidumFull.resid", "rh_HippocampusFull.resid", "rh_AmygdalaFull.resid", "rh_Accumbens.areaFull.resid")
+
+HCP.glo <- c("Total_GMFull.resid", "Tot_WMFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid")
+PNC.glo <- c("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid",
+                                   "Cerebellum_WMFull.resid")
+OASIS.glo <- c("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid",
+                                   "Cerebellum_WMFull.resid")
+
+
+```
+
+
+
+#PCA
+```{r}
+#prep for graphs
+area <- c("banks superior temporal", "caudal anterior cingulate",  "caudal middle frontal", "cuneus", "entorhinal", "fusiform",
+                   "inferior parietal", "inferior temporal","isthmus cingulate", "lateral occipital", "lateral orbitofrontal", "lingual",
+                   "medial orbito frontal", "middle temporal", "parahippocampal", "para central", "pars opercularis", "pars orbitalis",
+                   "pars triangularis", "pericalcarine", "post central", "posterior cingulate", "pre central", "precuneus", 
+                   "rostral anterior cingulate", "rostral middle frontal", "superior frontal", "superior parietal", "superior temporal",
+                   "supramarginal", "frontal pole", "temporal pole", "transverse temporal", "insula")
+left <- cbind(area, "left")
+right <- cbind(area, "right")
+hemis <- as.data.frame(rbind(left, right), stringsAsFactors = F) 
+colnames(hemis) <- c("area", "hemi")
+
+areaSC <- c("thalamus proper", "caudate", "putamen", "pallidum", "hippocampus", "amygdala", "accumbens")
+leftSC <- cbind(areaSC, "left")
+rightSC <- cbind(areaSC, "right")
+hemisSC <- as.data.frame(rbind(leftSC, rightSC), stringsAsFactors = F)
+colnames(hemisSC) <- c("area", "hemi")
+
+
+#divide by sex
+HCP.M <- subset(HCP.norm, Sex =="Male")
+HCP.F <- subset(HCP.norm, Sex =="Female")
+
+PNC.M <- subset(PNC.norm, Sex=="M")
+PNC.F <- subset(PNC.norm, Sex=="F")
+
+OASIS.M <- subset(OASIS.norm, Sex =="M")
+OASIS.F <- subset(OASIS.norm, Sex =="F")
+
+
+#do PCA per Sex
+#HCP
+#HCP.M.pca.tot <-prcomp(HCP.M[c(1:(length(HCP.M)-13))], center = TRUE, scale. = TRUE)
+HCP.M.pca.glo <-prcomp(HCP.M[HCP.glo], center = TRUE, scale. = TRUE)
+HCP.M.pca.SC <-prcomp(HCP.M[HCP.SC], center = TRUE, scale. = TRUE)
+HCP.M.pca.SA <-prcomp(select(HCP.M, starts_with("SA")), center = TRUE, scale. = TRUE)
+HCP.M.pca.CT <-prcomp(select(HCP.M, starts_with("CT")), center = TRUE, scale. = TRUE)
+
+#HCP.F.pca.tot <-prcomp(HCP.F[c(1:(length(HCP.F)-13))], center = TRUE, scale. = TRUE) 
+HCP.F.pca.glo <-prcomp(HCP.F[HCP.glo], center = TRUE, scale. = TRUE)
+HCP.F.pca.SC <-prcomp(HCP.F[HCP.SC], center = TRUE, scale. = TRUE)
+HCP.F.pca.SA <-prcomp(select(HCP.F, starts_with("SA")), center = TRUE, scale. = TRUE)
+HCP.F.pca.CT <-prcomp(select(HCP.F, starts_with("CT")), center = TRUE, scale. = TRUE)
+
+##PNC
+#PNC.M.pca.tot <-prcomp(PNC.M[c(1:(length(PNC.M)-13))], center = TRUE, scale. = TRUE) 
+PNC.M.pca.glo <-prcomp(PNC.M[PNC.glo], center = TRUE, scale. = TRUE)
+PNC.M.pca.SC <-prcomp(PNC.M[PNC.SC], center = TRUE, scale. = TRUE)
+PNC.M.pca.SA <-prcomp(select(PNC.M, starts_with("SA")), center = TRUE, scale. = TRUE)
+PNC.M.pca.CT <-prcomp(select(PNC.M, starts_with("CT")), center = TRUE, scale. = TRUE)
+
+#PNC.F.pca.tot <-prcomp(PNC.F[c(1:(length(PNC.F)-13))], center = TRUE, scale. = TRUE) 
+PNC.F.pca.glo <-prcomp(PNC.F[PNC.glo], center = TRUE, scale. = TRUE)
+PNC.F.pca.SC <-prcomp(PNC.F[PNC.SC], center = TRUE, scale. = TRUE)
+PNC.F.pca.SA <-prcomp(select(PNC.F, starts_with("SA")), center = TRUE, scale. = TRUE)
+PNC.F.pca.CT <-prcomp(select(PNC.F, starts_with("CT")), center = TRUE, scale. = TRUE)
+
+#OASIS
+#OASIS.M.pca.tot <-prcomp(OASIS.M[c(1:(length(OASIS.M)-13))], center = TRUE, scale. = TRUE) 
+OASIS.M.pca.glo <-prcomp(OASIS.M[OASIS.glo], center = TRUE, scale. = TRUE)
+OASIS.M.pca.SC <-prcomp(OASIS.M[OASIS.SC], center = TRUE, scale. = TRUE)
+OASIS.M.pca.SA <-prcomp(select(OASIS.M, starts_with("SA")), center = TRUE, scale. = TRUE)
+OASIS.M.pca.CT <-prcomp(select(OASIS.M, starts_with("CT")), center = TRUE, scale. = TRUE)
+
+#OASIS.F.pca.tot <-prcomp(OASIS.F[c(1:(length(OASIS.F)-13))], center = TRUE, scale. = TRUE) 
+OASIS.F.pca.glo <-prcomp(OASIS.F[OASIS.glo], center = TRUE, scale. = TRUE)
+OASIS.F.pca.SC <-prcomp(OASIS.F[OASIS.SC], center = TRUE, scale. = TRUE)
+OASIS.F.pca.SA <-prcomp(select(OASIS.F, starts_with("SA")), center = TRUE, scale. = TRUE)
+OASIS.F.pca.CT <-prcomp(select(OASIS.F, starts_with("CT")), center = TRUE, scale. = TRUE)
+
+
+#func for plotting loading on brain - cortex
+plot_loading_cort <- function(x, PCx){
+  load <- x$rotation[1:68, 1:10] # loadings for first PC 
+  plot <- as.data.frame(load, stringsAsFactors = F) %>% abs() %>% cbind(hemis) 
+  
+  g <- ggseg(plot, mapping=aes_string(fill=PCx), colour="black", size=0.4) + 
+  theme(axis.title.x = element_blank(), legend.position="none", axis.text.x= element_blank()) + scale_fill_gradient(low="blue", high="red", limits=c(0.1,0.7))
+  return(g)
+}
+
+#func for plotting loading on brain - subcortex
+plot_loading_SC <- function(x, PCx){
+  load <- x$rotation[1:14, 1:10] # loadings for first PC 
+  plot <- as.data.frame(load, stringsAsFactors = F) %>% abs() %>% cbind(hemisSC)
+  
+  g <- ggseg(plot, atlas="aseg", mapping=aes_string(fill=PCx), colour="black", size=0.4) + 
+  theme(axis.title.x = element_blank(), legend.position="none", axis.text.x= element_blank()) + scale_fill_gradient(low="blue", high="red", limits=c(0.1,0.7))
+  return(g)
+}
+
+#func for plotting loadingas - global
+plot_loading_Glo <- function(xx, xy){
+  loadX <- xx$rotation[1:4, 1:4] # loadings for first PC 
+  plotX <- as.data.frame(loadX, stringsAsFactors = F) %>% abs() 
+  plotX$sex <- "Female"
+  plotX$names <- c("Cerebral GM", "Cerebral WM", "Cerebellar GM", "Cerebellar WM")
+  
+  loadY <- xy$rotation[1:4, 1:4] # loadings for first PC 
+  plotY <- as.data.frame(loadY, stringsAsFactors = F) %>% abs() 
+  plotY$sex <- "Male"
+  names <- rownames(plotY)
+  plotY$names <- c("Cerebral GM", "Cerebral WM", "Cerebellar GM", "Cerebellar WM")
+  
+  df <- rbind(plotX, plotY)
+  
+  g1 <- ggplot(data=df, aes(x=names, y=PC1, fill=sex)) +  geom_bar(stat="identity", position=position_dodge()) + 
+  theme(axis.title.x = element_blank(), legend.position="none", axis.ticks = element_blank(), 
+        axis.title=element_text(size=12), axis.text=element_text(size=8), axis.text.x = element_text(angle = 35, hjust = 1)) + ylim(0,1)  + 
+    scale_x_discrete(limits= c("Cerebral GM", "Cerebral WM", "Cerebellar GM", "Cerebellar WM")) +ylab("loading")
+  g2 <- ggplot(data=df, aes(x=names, y=PC2, fill=sex)) +  geom_bar(stat="identity", position=position_dodge()) + 
+  theme(axis.title.x = element_blank(), legend.position="none", axis.ticks = element_blank(), 
+        axis.title=element_text(size=12), axis.text=element_text(size=8), axis.text.x = element_text(angle = 35, hjust = 1)) + ylim(0,1)  + 
+    scale_x_discrete(limits= c("Cerebral GM", "Cerebral WM", "Cerebellar GM", "Cerebellar WM")) +ylab("loading")
+  g3 <- ggplot(data=df, aes(x=names, y=PC3, fill=sex)) +  geom_bar(stat="identity", position=position_dodge()) + 
+  theme(axis.title.x = element_blank(), legend.position="none", axis.ticks = element_blank(),
+        axis.title=element_text(size=12), axis.text=element_text(size=8), axis.text.x = element_text(angle = 35, hjust = 1)) + ylim(0,1)  + 
+    scale_x_discrete(limits= c("Cerebral GM", "Cerebral WM", "Cerebellar GM", "Cerebellar WM")) +ylab("loading")
+  g4 <- ggplot(data=df, aes(x=names, y=PC4, fill=sex)) +  geom_bar(stat="identity", position=position_dodge()) + 
+  theme(axis.title.x = element_blank(), legend.position="none", axis.ticks = element_blank(),
+        axis.title=element_text(size=12), axis.text=element_text(size=8), axis.text.x = element_text(angle = 35, hjust = 1)) + ylim(0,1) + 
+    scale_x_discrete(limits= c("Cerebral GM", "Cerebral WM", "Cerebellar GM", "Cerebellar WM")) +ylab("loading")
+  
+  g <- plot_grid(g1, g2, g3, g4, align="hv", ncol = 1)
+  return(g)
+}
+
+#
+PNC.glo.fig <- plot_loading_Glo(PNC.F.pca.glo, PNC.M.pca.glo)
+HCP.glo.fig <- plot_loading_Glo(HCP.F.pca.glo, HCP.M.pca.glo)
+OASIS.glo.fig <- plot_loading_Glo(OASIS.F.pca.glo, OASIS.M.pca.glo)
+
+Glo.PCA.fig <- plot_grid(PNC.glo.fig, HCP.glo.fig, OASIS.glo.fig, align="hv", ncol = 3)
+
+
+Glo.PCA.fig.file <- paste(outdir, "PC1to5Glo.png", sep="/")
+ggsave(Glo.PCA.fig.file, Glo.PCA.fig, dpi=300, width = 21, height = 21, units = "cm")
+
+#extract and plot loadings on brain
+PNC.F.CT1 <- plot_loading_cort(PNC.F.pca.CT, "PC1")
+PNC.M.CT1 <- plot_loading_cort(PNC.M.pca.CT, "PC1")
+PNC.F.SA1 <- plot_loading_cort(PNC.F.pca.SA, "PC1")
+PNC.M.SA1 <- plot_loading_cort(PNC.M.pca.SA, "PC1")
+PNC.F.SC1 <- plot_loading_SC(PNC.F.pca.SC, "PC1")
+PNC.M.SC1 <- plot_loading_SC(PNC.M.pca.SC, "PC1")
+
+HCP.F.CT1 <- plot_loading_cort(HCP.F.pca.CT, "PC1")
+HCP.M.CT1 <- plot_loading_cort(HCP.M.pca.CT, "PC1")
+HCP.F.SA1 <- plot_loading_cort(HCP.F.pca.SA, "PC1")
+HCP.M.SA1 <- plot_loading_cort(HCP.M.pca.SA, "PC1")
+HCP.F.SC1 <- plot_loading_SC(HCP.F.pca.SC, "PC1")
+HCP.M.SC1 <- plot_loading_SC(HCP.M.pca.SC, "PC1")
+
+OASIS.F.CT1 <- plot_loading_cort(OASIS.F.pca.CT, "PC1")
+OASIS.M.CT1 <- plot_loading_cort(OASIS.M.pca.CT, "PC1")
+OASIS.F.SA1 <- plot_loading_cort(OASIS.F.pca.SA, "PC1")
+OASIS.M.SA1 <- plot_loading_cort(OASIS.M.pca.SA, "PC1")
+OASIS.F.SC1 <- plot_loading_SC(OASIS.F.pca.SC, "PC1")
+OASIS.M.SC1 <- plot_loading_SC(OASIS.M.pca.SC, "PC1")
+
+#arrange
+PC1sc <- plot_grid(PNC.F.SC1, PNC.M.SC1, HCP.F.SC1, HCP.M.SC1, OASIS.F.SC1, OASIS.M.SC1, align="hv", ncol = 6)
+PC1sa <- plot_grid(PNC.F.SA1, HCP.F.SA1, OASIS.F.SA1, PNC.M.SA1, HCP.M.SA1, OASIS.M.SA1, align="hv", ncol = 3)
+PC1ct <- plot_grid(PNC.F.CT1, HCP.F.CT1, OASIS.F.CT1, PNC.M.CT1, HCP.M.CT1, OASIS.M.CT1, align="hv", ncol = 3)
+
+#PC2
+PNC.F.CT2 <- plot_loading_cort(PNC.F.pca.CT, "PC2")
+PNC.M.CT2 <- plot_loading_cort(PNC.M.pca.CT, "PC2")
+PNC.F.SA2 <- plot_loading_cort(PNC.F.pca.SA, "PC2")
+PNC.M.SA2 <- plot_loading_cort(PNC.M.pca.SA, "PC2")
+PNC.F.SC2 <- plot_loading_SC(PNC.F.pca.SC, "PC2")
+PNC.M.SC2 <- plot_loading_SC(PNC.M.pca.SC, "PC2")
+
+HCP.F.CT2 <- plot_loading_cort(HCP.F.pca.CT, "PC2")
+HCP.M.CT2 <- plot_loading_cort(HCP.M.pca.CT, "PC2")
+HCP.F.SA2 <- plot_loading_cort(HCP.F.pca.SA, "PC2")
+HCP.M.SA2 <- plot_loading_cort(HCP.M.pca.SA, "PC2")
+HCP.F.SC2 <- plot_loading_SC(HCP.F.pca.SC, "PC2")
+HCP.M.SC2 <- plot_loading_SC(HCP.M.pca.SC, "PC2")
+
+OASIS.F.CT2 <- plot_loading_cort(OASIS.F.pca.CT, "PC2")
+OASIS.M.CT2 <- plot_loading_cort(OASIS.M.pca.CT, "PC2")
+OASIS.F.SA2 <- plot_loading_cort(OASIS.F.pca.SA, "PC2")
+OASIS.M.SA2 <- plot_loading_cort(OASIS.M.pca.SA, "PC2")
+OASIS.F.SC2 <- plot_loading_SC(OASIS.F.pca.SC, "PC2")
+OASIS.M.SC2 <- plot_loading_SC(OASIS.M.pca.SC, "PC2")
+
+#arrange
+PC2sc <- plot_grid(PNC.F.SC2, PNC.M.SC2, HCP.F.SC2, HCP.M.SC2, OASIS.F.SC2, OASIS.M.SC2, align="hv", ncol = 6)
+PC2sa <- plot_grid(PNC.F.SA2, HCP.F.SA2, OASIS.F.SA2, PNC.M.SA2, HCP.M.SA2, OASIS.M.SA2, align="hv", ncol = 3)
+PC2ct <- plot_grid(PNC.F.CT2, HCP.F.CT2, OASIS.F.CT2, PNC.M.CT2, HCP.M.CT2, OASIS.M.CT2, align="hv", ncol = 3)
+
+#PC3
+PNC.F.CT3 <- plot_loading_cort(PNC.F.pca.CT, "PC3")
+PNC.M.CT3 <- plot_loading_cort(PNC.M.pca.CT, "PC3")
+PNC.F.SA3 <- plot_loading_cort(PNC.F.pca.SA, "PC3")
+PNC.M.SA3 <- plot_loading_cort(PNC.M.pca.SA, "PC3")
+PNC.F.SC3 <- plot_loading_SC(PNC.F.pca.SC, "PC3")
+PNC.M.SC3 <- plot_loading_SC(PNC.M.pca.SC, "PC3")
+
+HCP.F.CT3 <- plot_loading_cort(HCP.F.pca.CT, "PC3")
+HCP.M.CT3 <- plot_loading_cort(HCP.M.pca.CT, "PC3")
+HCP.F.SA3 <- plot_loading_cort(HCP.F.pca.SA, "PC3")
+HCP.M.SA3 <- plot_loading_cort(HCP.M.pca.SA, "PC3")
+HCP.F.SC3 <- plot_loading_SC(HCP.F.pca.SC, "PC3")
+HCP.M.SC3 <- plot_loading_SC(HCP.M.pca.SC, "PC3")
+
+OASIS.F.CT3 <- plot_loading_cort(OASIS.F.pca.CT, "PC3")
+OASIS.M.CT3 <- plot_loading_cort(OASIS.M.pca.CT, "PC3")
+OASIS.F.SA3 <- plot_loading_cort(OASIS.F.pca.SA, "PC3")
+OASIS.M.SA3 <- plot_loading_cort(OASIS.M.pca.SA, "PC3")
+OASIS.F.SC3 <- plot_loading_SC(OASIS.F.pca.SC, "PC3")
+OASIS.M.SC3 <- plot_loading_SC(OASIS.M.pca.SC, "PC3")
+
+#arrange
+PC3sc <- plot_grid(PNC.F.SC3, PNC.M.SC3, HCP.F.SC3, HCP.M.SC3, OASIS.F.SC3, OASIS.M.SC3, align="hv", ncol = 6)
+PC3sa <- plot_grid(PNC.F.SA3, HCP.F.SA3, OASIS.F.SA3, PNC.M.SA3, HCP.M.SA3, OASIS.M.SA3, align="hv", ncol = 3)
+PC3ct <- plot_grid(PNC.F.CT3, HCP.F.CT3, OASIS.F.CT3, PNC.M.CT3, HCP.M.CT3, OASIS.M.CT3, align="hv", ncol = 3)
+
+
+#PC4
+PNC.F.CT4 <- plot_loading_cort(PNC.F.pca.CT, "PC4")
+PNC.M.CT4 <- plot_loading_cort(PNC.M.pca.CT, "PC4")
+PNC.F.SA4 <- plot_loading_cort(PNC.F.pca.SA, "PC4")
+PNC.M.SA4 <- plot_loading_cort(PNC.M.pca.SA, "PC4")
+PNC.F.SC4 <- plot_loading_SC(PNC.F.pca.SC, "PC4")
+PNC.M.SC4 <- plot_loading_SC(PNC.M.pca.SC, "PC4")
+
+HCP.F.CT4 <- plot_loading_cort(HCP.F.pca.CT, "PC4")
+HCP.M.CT4 <- plot_loading_cort(HCP.M.pca.CT, "PC4")
+HCP.F.SA4 <- plot_loading_cort(HCP.F.pca.SA, "PC4")
+HCP.M.SA4 <- plot_loading_cort(HCP.M.pca.SA, "PC4")
+HCP.F.SC4 <- plot_loading_SC(HCP.F.pca.SC, "PC4")
+HCP.M.SC4 <- plot_loading_SC(HCP.M.pca.SC, "PC4")
+
+OASIS.F.CT4 <- plot_loading_cort(OASIS.F.pca.CT, "PC4")
+OASIS.M.CT4 <- plot_loading_cort(OASIS.M.pca.CT, "PC4")
+OASIS.F.SA4 <- plot_loading_cort(OASIS.F.pca.SA, "PC4")
+OASIS.M.SA4 <- plot_loading_cort(OASIS.M.pca.SA, "PC4")
+OASIS.F.SC4 <- plot_loading_SC(OASIS.F.pca.SC, "PC4")
+OASIS.M.SC4 <- plot_loading_SC(OASIS.M.pca.SC, "PC4")
+
+#arrange
+PC4sc <- plot_grid(PNC.F.SC4, PNC.M.SC4, HCP.F.SC4, HCP.M.SC4, OASIS.F.SC4, OASIS.M.SC4, align="hv", ncol = 6)
+PC4sa <- plot_grid(PNC.F.SA4, HCP.F.SA4, OASIS.F.SA4, PNC.M.SA4, HCP.M.SA4, OASIS.M.SA4, align="hv", ncol = 3)
+PC4ct <- plot_grid(PNC.F.CT4, HCP.F.CT4, OASIS.F.CT4, PNC.M.CT4, HCP.M.CT4, OASIS.M.CT4, align="hv", ncol = 3)
+
+
+#PC5
+PNC.F.CT5 <- plot_loading_cort(PNC.F.pca.CT, "PC5")
+PNC.M.CT5 <- plot_loading_cort(PNC.M.pca.CT, "PC5")
+PNC.F.SA5 <- plot_loading_cort(PNC.F.pca.SA, "PC5")
+PNC.M.SA5 <- plot_loading_cort(PNC.M.pca.SA, "PC5")
+PNC.F.SC5 <- plot_loading_SC(PNC.F.pca.SC, "PC5")
+PNC.M.SC5 <- plot_loading_SC(PNC.M.pca.SC, "PC5")
+
+HCP.F.CT5 <- plot_loading_cort(HCP.F.pca.CT, "PC5")
+HCP.M.CT5 <- plot_loading_cort(HCP.M.pca.CT, "PC5")
+HCP.F.SA5 <- plot_loading_cort(HCP.F.pca.SA, "PC5")
+HCP.M.SA5 <- plot_loading_cort(HCP.M.pca.SA, "PC5")
+HCP.F.SC5 <- plot_loading_SC(HCP.F.pca.SC, "PC5")
+HCP.M.SC5 <- plot_loading_SC(HCP.M.pca.SC, "PC5")
+
+OASIS.F.CT5 <- plot_loading_cort(OASIS.F.pca.CT, "PC5")
+OASIS.M.CT5 <- plot_loading_cort(OASIS.M.pca.CT, "PC5")
+OASIS.F.SA5 <- plot_loading_cort(OASIS.F.pca.SA, "PC5")
+OASIS.M.SA5 <- plot_loading_cort(OASIS.M.pca.SA, "PC5")
+OASIS.F.SC5 <- plot_loading_SC(OASIS.F.pca.SC, "PC5")
+OASIS.M.SC5 <- plot_loading_SC(OASIS.M.pca.SC, "PC5")
+
+#arrange
+PC5sc <- plot_grid(PNC.F.SC5, PNC.M.SC5, HCP.F.SC5, HCP.M.SC5, OASIS.F.SC5, OASIS.M.SC5, align="hv", ncol = 6)
+PC5sa <- plot_grid(PNC.F.SA5, HCP.F.SA5, OASIS.F.SA5, PNC.M.SA5, HCP.M.SA5, OASIS.M.SA5, align="hv", ncol = 3)
+PC5ct <- plot_grid(PNC.F.CT5, HCP.F.CT5, OASIS.F.CT5, PNC.M.CT5, HCP.M.CT5, OASIS.M.CT5, align="hv", ncol = 3)
+
+
+plot_grid(PC1sc, PC2sc, PC3sc, PC4sc, PC5sc, align="hv", ncol = 1)
+plot_grid(PC1sa, PC2sa, PC3sa, PC4sa, PC5sa, align="hv", ncol = 1)
+plot_grid(PC1ct, PC2ct, PC3ct, PC4ct, PC5ct, align="hv", ncol = 1)
+
+PCsc1.5 <- plot_grid(PC1sc, PC2sc, PC3sc, PC4sc, PC5sc, align="hv", ncol = 1)
+PCsa1.5 <- plot_grid(PC1sa, PC2sa, PC3sa, PC4sa, PC5sa, align="hv", ncol = 1)
+PCct1.5 <- plot_grid(PC1ct, PC2ct, PC3ct, PC4ct, PC5ct, align="hv", ncol = 1)
+
+PCsc1.5.file <- paste(outdir, "PC1to5SC.png", sep="/")
+PCsa1.5.file <- paste(outdir, "PC1to5SA.png", sep="/")
+PCct1.5.file <- paste(outdir, "PC1to5CT.png", sep="/")
+ggsave(PCsc1.5.file, PCsc1.5, dpi=300, width = 21, height = 21, units = "cm")
+ggsave(PCsa1.5.file, PCsa1.5, dpi=300, width = 21, height = 21, units = "cm")
+ggsave(PCct1.5.file, PCct1.5, dpi=300, width = 21, height = 21, units = "cm")
+
+
+
+#function to biplot pc1vpc2, pc1vpc3 & pc2vpc3 
+plot_pca_biplot <- function(x, metric, study){
+  if (metric== "CT" | metric =="SA"){
+    pca <-prcomp(select(x, starts_with(metric)), center = TRUE, scale. = TRUE)
+  } else if (metric== "SC"){
+    if (study == "PNC"){
+      pca <- prcomp(x[PNC.SC], center = TRUE, scale. = TRUE)
+    } else if (study == "HCP"){
+      pca <- prcomp(x[HCP.SC], center = TRUE, scale. = TRUE)
+    } else if (study == "OASIS"){
+      pca <- prcomp(x[OASIS.SC], center = TRUE, scale. = TRUE)
+    }
+  } else if (metric== "glo"){
+    if (study == "PNC"){
+      pca <- prcomp(x[PNC.glo], center = TRUE, scale. = TRUE)
+    } else if (study == "HCP"){
+      pca <- prcomp(x[HCP.glo], center = TRUE, scale. = TRUE)
+    } else if (study == "OASIS"){
+      pca <- prcomp(x[OASIS.glo], center = TRUE, scale. = TRUE)
+    }
+  } else if (metric== "total"){
+      pca <- prcomp(x[c(1:(length(x)-13))], center = TRUE, scale. = TRUE)
+  }
+  pca1v2 <- ggbiplot(pca, obs.scale = 1, var.scale = 1, varname.size = 1, alpha= 0,
+                     ellipse = TRUE, circle = FALSE, groups=x$Sex) +
+    theme_minimal()+ geom_point(aes(colour=x$Sex), size = 0.05, alpha = 0.3) +
+    theme(legend.position = "none", axis.title=element_text(size=4), axis.text=element_text(size=3))
+  pca1v3 <- ggbiplot(pca, choices = c(1,3), obs.scale = 1, var.scale = 1, varname.size = 1, alpha= 0,
+                     ellipse = TRUE, circle = FALSE, groups=x$Sex) +
+    theme_minimal() + geom_point(aes(colour=x$Sex), size = 0.05, alpha = 0.3) +
+    theme(legend.position = "none", axis.title=element_text(size=4), axis.text=element_text(size=3))
+  pca2v3 <- ggbiplot(pca, choices = c(2,3), obs.scale = 1, var.scale = 1, varname.size = 1, alpha= 0,
+                     ellipse = TRUE, circle = FALSE, groups=x$Sex) +
+    theme_minimal() + geom_point(aes(colour=x$Sex), size = 0.05, alpha = 0.3) +
+    theme(legend.position = "none", axis.title=element_text(size=4), axis.text=element_text(size=3))
+  grid <- plot_grid(pca1v2, pca1v3, pca2v3, align="hv", ncol = 1)
+  return(grid)
+}
+
+# #print variance
+# summary(PNC.F.pca.CT) # print variance accounted for
+# #print loadings
+# PNC.F.pca.CT$rotation[1:10, 1:10] #for first 10 PCs
+# #scree plot
+# plot(PNC.F.pca.CT,type="lines") 
+# #plot PC1 v PC2
+# ggbiplot(PNC.F.pca.CT, obs.scale = 1, var.scale = 1, varname.size = 5, ellipse = TRUE, circle = TRUE) +
+#   theme_minimal()+
+#   theme(legend.position = "bottom")
+
+
+
+
+
+PNC.tot.plt <- plot_pca_biplot(PNC.norm, "total", "PNC")
+PNC.glo.plt <- plot_pca_biplot(PNC.norm, "glo", "PNC")
+PNC.SC.plt <- plot_pca_biplot(PNC.norm, "SC", "PNC")
+PNC.CT.plt <- plot_pca_biplot(PNC.norm, "CT", "PNC")
+PNC.SA.plt <- plot_pca_biplot(PNC.norm, "SA", "PNC")
+
+HCP.tot.plt <- plot_pca_biplot(HCP.norm, "total", "HCP")
+HCP.glo.plt <- plot_pca_biplot(HCP.norm, "glo", "HCP")
+HCP.SC.plt <- plot_pca_biplot(HCP.norm, "SC", "HCP")
+HCP.CT.plt <- plot_pca_biplot(HCP.norm, "CT", "HCP")
+HCP.SA.plt <- plot_pca_biplot(HCP.norm, "SA", "HCP")
+
+OASIS.tot.plt <- plot_pca_biplot(OASIS.norm, "total", "OASIS")
+OASIS.glo.plt <- plot_pca_biplot(OASIS.norm, "glo", "OASIS")
+OASIS.SC.plt <- plot_pca_biplot(OASIS.norm, "SC", "OASIS")
+OASIS.CT.plt <- plot_pca_biplot(OASIS.norm, "CT", "OASIS")
+OASIS.SA.plt <- plot_pca_biplot(OASIS.norm, "SA", "OASIS")
+
+tot.plt <- plot_grid(PNC.tot.plt, HCP.tot.plt, OASIS.tot.plt, ncol=3)
+glo.plt <- plot_grid(PNC.glo.plt, HCP.glo.plt, OASIS.glo.plt, ncol=3)
+SC.plt <- plot_grid(PNC.SC.plt, HCP.SC.plt, OASIS.SC.plt, ncol=3)
+SA.plt <- plot_grid(PNC.SA.plt, HCP.SA.plt, OASIS.SA.plt, ncol=3)
+CT.plt <- plot_grid(PNC.CT.plt, HCP.CT.plt, OASIS.CT.plt, ncol=3)
+
+# #names and save
+tot.PCAplot.file <- paste(outdir, "PCAtot.png", sep="/")
+glo.PCAplot.file <- paste(outdir, "PCAglo.png", sep="/")
+SC.PCAplot.file <- paste(outdir, "PCAsc.png", sep="/")
+SA.PCAplot.file <- paste(outdir, "PCAsa.png", sep="/")
+CT.PCAplot.file <- paste(outdir, "PCAct.png", sep="/")
+ggsave(tot.PCAplot.file, tot.plt, dpi=300, width = 21, height = 12, units = "cm")
+ggsave(glo.PCAplot.file, glo.plt, dpi=300, width = 21, height = 12, units = "cm")
+ggsave(SC.PCAplot.file, SC.plt, dpi=300, width = 21, height = 12, units = "cm")
+ggsave(SA.PCAplot.file, SA.plt, dpi=300, width = 21, height = 12, units = "cm")
+ggsave(CT.PCAplot.file, CT.plt, dpi=300, width = 21, height = 12, units = "cm")
+# 
+# ####### for mean
+# CTplot.df <- as.data.frame(CT_out_tbl, stringsAsFactors = F) %>% cbind(hemis)
+# 
+# ## subsets of data that was significant
+# CTplot_sig.raw <- subset(CTplot.df, as.numeric(AgeResid_Padj) < 0.05)
+# CTplot_sig.cor <- subset(CTplot.df, as.numeric(FullResid_Padj) < 0.05)
+# 
+# 
+
+
+
+#HCP
+HCP.pca.tot <-prcomp(HCP.norm[c(1:(length(HCP.norm)-3))], center = TRUE, scale. = TRUE)
+HCP.pca.glo <-prcomp(HCP.norm[HCP.glo], center = TRUE, scale. = TRUE)
+HCP.pca.SC <-prcomp(HCP.norm[HCP.SC], center = TRUE, scale. = TRUE)
+HCP.pca.SA <-prcomp(select(HCP.norm, starts_with("SA")), center = TRUE, scale. = TRUE)
+HCP.pca.CT <-prcomp(select(HCP.norm, starts_with("CT")), center = TRUE, scale. = TRUE)
+
+##PNC
+PNC.pca.tot <-prcomp(PNC.norm[c(1:(length(PNC.norm)-3))], center = TRUE, scale. = TRUE) 
+PNC.pca.glo <-prcomp(PNC.norm[PNC.glo], center = TRUE, scale. = TRUE)
+PNC.pca.SC <-prcomp(PNC.norm[PNC.SC], center = TRUE, scale. = TRUE)
+PNC.pca.SA <-prcomp(select(PNC.norm, starts_with("SA")), center = TRUE, scale. = TRUE)
+PNC.pca.CT <-prcomp(select(PNC.norm, starts_with("CT")), center = TRUE, scale. = TRUE)
+
+#OASIS
+OASIS.pca.tot <-prcomp(OASIS.norm[c(1:(length(OASIS.norm)-3))], center = TRUE, scale. = TRUE) 
+OASIS.pca.glo <-prcomp(OASIS.norm[OASIS.glo], center = TRUE, scale. = TRUE)
+OASIS.pca.SC <-prcomp(OASIS.norm[OASIS.SC], center = TRUE, scale. = TRUE)
+OASIS.pca.SA <-prcomp(select(OASIS.norm, starts_with("SA")), center = TRUE, scale. = TRUE)
+OASIS.pca.CT <-prcomp(select(OASIS.norm, starts_with("CT")), center = TRUE, scale. = TRUE)
+
+
+
+######### getting and ordering rotations
+#func for plotting loading on brain - cortex
+get_loading_1to10 <- function(x){
+  load <- x$rotation[1:68, 1:10] # loadings for first PC 
+  return(load)
+}
+get_loading_1to10SC <- function(x){
+  load <- x$rotation[1:14, 1:10] # loadings for first PC 
+  return(load)
+}
+
+
+PNC.F.CT1.10 <- get_loading_1to10(PNC.F.pca.CT)
+PNC.M.CT1.10 <- get_loading_1to10(PNC.M.pca.CT)
+PNC.F.SA1.10 <- get_loading_1to10(PNC.F.pca.SA)
+PNC.M.SA1.10 <- get_loading_1to10(PNC.M.pca.SA)
+PNC.F.SC1.10 <- get_loading_1to10SC(PNC.F.pca.SC)
+PNC.M.SC1.10 <- get_loading_1to10SC(PNC.M.pca.SC)
+
+HCP.F.CT1.10 <- get_loading_1to10(HCP.F.pca.CT)
+HCP.M.CT1.10 <- get_loading_1to10(HCP.M.pca.CT)
+HCP.F.SA1.10 <- get_loading_1to10(HCP.F.pca.SA)
+HCP.M.SA1.10 <- get_loading_1to10(HCP.M.pca.SA)
+HCP.F.SC1.10 <- get_loading_1to10SC(HCP.F.pca.SC)
+HCP.M.SC1.10 <- get_loading_1to10SC(HCP.M.pca.SC)
+
+OASIS.F.CT1.10 <- get_loading_1to10(OASIS.F.pca.CT)
+OASIS.M.CT1.10 <- get_loading_1to10(OASIS.M.pca.CT)
+OASIS.F.SA1.10 <- get_loading_1to10(OASIS.F.pca.SA)
+OASIS.M.SA1.10 <- get_loading_1to10(OASIS.M.pca.SA)
+OASIS.F.SC1.10 <- get_loading_1to10SC(OASIS.F.pca.SC)
+OASIS.M.SC1.10 <- get_loading_1to10SC(OASIS.M.pca.SC)
+
+```
+

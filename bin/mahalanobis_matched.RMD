@@ -1,0 +1,657 @@
+---
+title: "mahalanobis - mathced"
+author: "nforde"
+date: "February 28, 2019"
+output: html_document
+---
+Same as the regular mahalanobis script but pulls the matched data outputs 
+## get libraries/set paths
+```{r}
+library(tidyverse)
+library(broom)
+library(knitr)
+library(car)
+library(cowplot)
+library(lme4)
+library(ggseg)
+library(gridExtra)
+library(reshape2)
+library(ggbiplot)
+
+## set all the paths
+#HCP
+HCP.res <- read.csv("/projects/nforde/HCP/stats/HCP/matched/Allres.csv")
+PNC.res <- read.csv("/projects/nforde/HCP/stats/PNC/matched/Allres.csv")
+OASIS.res <- read.csv("/projects/nforde/HCP/stats/OASIS/matched/Allres.csv")
+
+HCP.norm <- HCP.res[c(2:length(HCP.res))]
+PNC.norm <- PNC.res[c(2:length(PNC.res))]
+OASIS.norm <- OASIS.res[c(2:length(OASIS.res))]
+
+outdir <- "/projects/nforde/HCP/stats/combined_figures/matched"
+
+```
+## define functions
+```{r}
+
+unit1 <- function(x) {x / sqrt(sum(x^2))} #where x is the vector to normalise
+
+euc.dist <- function(x) {
+  y <- colMeans(x)
+  euc <- apply(x, 1, function(i) sqrt(sum((i - y) ^ 2)))
+  return(euc)
+}
+
+mah.dist <- function(x,cov){
+  mahsq <- mahalanobis(x, colMeans(x), cov)
+  mah <- sqrt(mahsq)
+  return(mah)
+}
+
+cos.dist <- function(x, y){
+  sim <- x %*% y / (sqrt(sum(x ^ 2)) + sqrt(sum(y ^ 2)))
+  deg <- round(acos(sim) * 180/pi,0)
+  return(deg) 
+}
+
+get_colors <- function(groups, group.col = palette()){
+  groups <- as.factor(groups)
+  ngrps <- length(levels(groups))
+  if(ngrps > length(group.col)) 
+    group.col <- rep(group.col, ngrps)
+  color <- group.col[as.numeric(groups)]
+  names(color) <- as.vector(groups)
+  return(color)
+}
+
+extractT <- function(i, num){
+  Tval <- lapply((i), function(f) f$statistic)
+  Pval <- lapply((i), function(f) f$p.value)
+  dof <- lapply((i), function(f) f$parameter)
+   
+  Padj <- p.adjust(Pval, method="fdr", n=num)
+  Cohen <- (as.numeric(Tval)*2)/sqrt(as.numeric(dof))
+  
+  merged <- as.data.frame(cbind(Tval, Padj, Cohen))
+  return(merged)
+
+}
+
+GeomSplitViolin <- ggproto("GeomSplitViolin", GeomViolin, draw_group = function(self, data, ..., draw_quantiles = NULL){
+  data <- transform(data, xminv = x - violinwidth * (x - xmin), xmaxv = x + violinwidth * (xmax - x))
+  grp <- data[1,'group']
+  newdata <- plyr::arrange(transform(data, x = if(grp%%2==1) xminv else xmaxv), if(grp%%2==1) y else -y)
+  newdata <- rbind(newdata[1, ], newdata, newdata[nrow(newdata), ], newdata[1, ])
+  newdata[c(1,nrow(newdata)-1,nrow(newdata)), 'x'] <- round(newdata[1, 'x']) 
+  if (length(draw_quantiles) > 0 & !scales::zero_range(range(data$y))) {
+    stopifnot(all(draw_quantiles >= 0), all(draw_quantiles <= 
+                                              1))
+    quantiles <- ggplot2:::create_quantile_segment_frame(data, draw_quantiles)
+    aesthetics <- data[rep(1, nrow(quantiles)), setdiff(names(data), c("x", "y")), drop = FALSE]
+    aesthetics$alpha <- rep(1, nrow(quantiles))
+    both <- cbind(quantiles, aesthetics)
+    quantile_grob <- GeomPath$draw_panel(both, ...)
+    ggplot2:::ggname("geom_split_violin", grid::grobTree(GeomPolygon$draw_panel(newdata, ...), quantile_grob))
+  }
+  else {
+    ggplot2:::ggname("geom_split_violin", GeomPolygon$draw_panel(newdata, ...))
+  }
+})
+
+geom_split_violin <- function (mapping = NULL, data = NULL, stat = "ydensity", position = "identity", ..., draw_quantiles = NULL, trim = TRUE, scale = "area", na.rm = FALSE, show.legend = NA, inherit.aes = TRUE) {
+  layer(data = data, mapping = mapping, stat = stat, geom = GeomSplitViolin, position = position, show.legend = show.legend, inherit.aes = inherit.aes, params = list(trim = trim, scale = scale, draw_quantiles = draw_quantiles, na.rm = na.rm, ...))
+}
+
+
+```
+# Euclidean distance
+
+```{r}
+#some list of variable names to keep things easier later
+HCP.SC <- c("L_ThalamusProperFull.resid", "L_CaudateFull.resid", "L_PutamenFull.resid", "L_PallidumFull.resid",
+            "L_HippoFull.resid", "L_AmygdalaFull.resid", "L_AccumbensAreaFull.resid", "R_ThalamusProperFull.resid",
+            "R_CaudateFull.resid", "R_PutamenFull.resid", "R_PallidumFull.resid", "R_HippoFull.resid",
+            "R_AmygdalaFull.resid", "R_AccumbensAreaFull.resid")
+
+PNC.SC <- c("Left.Thalamus.ProperFull.resid", "Left.CaudateFull.resid", "Left.PutamenFull.resid",
+            "Left.PallidumFull.resid", "Left.HippocampusFull.resid", "Left.AmygdalaFull.resid",
+            "Left.Accumbens.areaFull.resid", "Right.Thalamus.ProperFull.resid", "Right.CaudateFull.resid",
+            "Right.PutamenFull.resid", "Right.PallidumFull.resid", "Right.HippocampusFull.resid",
+            "Right.AmygdalaFull.resid", "Right.Accumbens.areaFull.resid")
+
+OASIS.SC <- c("lh_Thalamus.ProperFull.resid", "lh_CaudateFull.resid", "lh_PutamenFull.resid", "lh_PallidumFull.resid",
+                                "lh_HippocampusFull.resid", "lh_AmygdalaFull.resid", "lh_Accumbens.areaFull.resid",
+                               "rh_Thalamus.ProperFull.resid", "rh_CaudateFull.resid", "rh_PutamenFull.resid",
+           "rh_PallidumFull.resid", "rh_HippocampusFull.resid", "rh_AmygdalaFull.resid", "rh_Accumbens.areaFull.resid")
+
+HCP.glo <- c("Total_GMFull.resid", "Tot_WMFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid")
+PNC.glo <- c("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid",
+                                   "Cerebellum_WMFull.resid")
+OASIS.glo <- c("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid",
+                                   "Cerebellum_WMFull.resid")
+
+
+#divide by sex
+HCP.M <- subset(HCP.norm, Sex =="Male")
+HCP.F <- subset(HCP.norm, Sex =="Female")
+
+PNC.M <- subset(PNC.norm, Sex=="M")
+PNC.F <- subset(PNC.norm, Sex=="F")
+
+OASIS.M <- subset(OASIS.norm, Sex =="M")
+OASIS.F <- subset(OASIS.norm, Sex =="F")
+
+#calculate euclidean distance to centroid for each sub
+HCP.M$euc.tot <- euc.dist(HCP.M[c(1:(length(HCP.M)-3))])
+HCP.M$euc.glo <- euc.dist(HCP.M[HCP.glo])
+HCP.M$euc.SC <- euc.dist(HCP.M[HCP.SC])
+HCP.M$euc.SA <- euc.dist(select(HCP.M, starts_with("SA")))
+HCP.M$euc.CT <- euc.dist(select(HCP.M, starts_with("CT")))
+
+
+HCP.F$euc.tot <- euc.dist(HCP.F[c(1:(length(HCP.F)-3))]) 
+HCP.F$euc.glo <- euc.dist(HCP.F[HCP.glo])
+HCP.F$euc.SC <- euc.dist(HCP.F[HCP.SC])
+HCP.F$euc.SA <- euc.dist(select(HCP.F, starts_with("SA")))
+HCP.F$euc.CT <- euc.dist(select(HCP.F, starts_with("CT")))
+
+HCP.euc <- rbind(HCP.M, HCP.F)
+
+##PNC
+PNC.M$euc.tot <- euc.dist(PNC.M[c(1:(length(PNC.M)-3))]) 
+PNC.M$euc.glo <- euc.dist(PNC.M[PNC.glo])
+PNC.M$euc.SC <- euc.dist(PNC.M[PNC.SC])
+PNC.M$euc.SA <- euc.dist(select(PNC.M, starts_with("SA")))
+PNC.M$euc.CT <- euc.dist(select(PNC.M, starts_with("CT")))
+
+PNC.F$euc.tot <- euc.dist(PNC.F[c(1:(length(PNC.F)-3))]) 
+PNC.F$euc.glo <- euc.dist(PNC.F[PNC.glo])
+PNC.F$euc.SC <- euc.dist(PNC.F[PNC.SC])
+PNC.F$euc.SA <- euc.dist(select(PNC.F, starts_with("SA")))
+PNC.F$euc.CT <- euc.dist(select(PNC.F, starts_with("CT")))
+
+PNC.euc <- rbind(PNC.M, PNC.F)
+
+#OASIS
+OASIS.M$euc.tot <- euc.dist(OASIS.M[c(1:(length(OASIS.M)-3))]) 
+OASIS.M$euc.glo <- euc.dist(OASIS.M[OASIS.glo])
+OASIS.M$euc.SC <- euc.dist(OASIS.M[OASIS.SC])
+OASIS.M$euc.SA <- euc.dist(select(OASIS.M, starts_with("SA")))
+OASIS.M$euc.CT <- euc.dist(select(OASIS.M, starts_with("CT")))
+
+OASIS.F$euc.tot <- euc.dist(OASIS.F[c(1:(length(OASIS.F)-3))]) 
+OASIS.F$euc.glo <- euc.dist(OASIS.F[OASIS.glo])
+OASIS.F$euc.SC <- euc.dist(OASIS.F[OASIS.SC])
+OASIS.F$euc.SA <- euc.dist(select(OASIS.F, starts_with("SA")))
+OASIS.F$euc.CT <- euc.dist(select(OASIS.F, starts_with("CT")))
+
+OASIS.euc <- rbind(OASIS.M, OASIS.F)
+
+#get stats from each dataset
+euc.ls <- c("PNC.euc", "HCP.euc", "OASIS.euc")
+Total  <- lapply(euc.ls, function(i){
+  t.test(euc.tot ~ Sex , data=get(i))
+})
+#num=length(Total)
+num=4
+Totalstats <- extractT(Total, num)
+
+Global  <- lapply(euc.ls, function(i){
+  t.test(euc.glo ~ Sex , data=get(i))
+})
+Globalstats <- extractT(Global, num)
+
+SC  <- lapply(euc.ls, function(i){
+  t.test(euc.SC ~ Sex , data=get(i))
+})
+SCstats <- extractT(SC, num)
+
+SA  <- lapply(euc.ls, function(i){
+  t.test(euc.SA ~ Sex , data=get(i))
+})
+SAstats <- extractT(SA, num)
+
+CT  <- lapply(euc.ls, function(i){
+  t.test(euc.CT ~ Sex , data=get(i))
+})
+CTstats <- extractT(CT, num)
+
+names(Totalstats) <- paste0('Tot_',names(Totalstats))
+names(Globalstats) <- paste0('Glo_',names(Globalstats))
+names(SCstats) <- paste0('SC_',names(SCstats))
+names(SAstats) <- paste0('SA_',names(SAstats))
+names(CTstats) <- paste0('CT_',names(CTstats))
+
+stats <- cbind(Totalstats, Globalstats, SCstats, SAstats, CTstats)
+
+stats <- apply(stats,2,as.character)
+rownames(stats) <- euc.ls
+Euc.out.file <- paste(outdir, "Euc_stats.csv", sep="/")
+write.csv(stats, file=Euc.out.file, row.names = T)
+print(stats)
+
+```
+
+# Mahalanobis
+```{r}
+#calculate covariance matrices on full sample
+HCP.tot.cov <- cov(HCP.norm[c(1:(length(HCP.norm)-3))])
+HCP.glo.cov <- cov(HCP.norm[HCP.glo])
+HCP.SC.cov <- cov(HCP.norm[HCP.SC])
+HCP.SA.cov <- cov(select(HCP.norm, starts_with("SA")))
+HCP.CT.cov <- cov(select(HCP.norm, starts_with("SA")))
+
+#calculate distance
+HCP.M$mah.tot <- mah.dist(HCP.M[c(1:(length(HCP.M)-8))], HCP.tot.cov)
+HCP.M$mah.glo <- mah.dist(HCP.M[HCP.glo], HCP.glo.cov)
+HCP.M$mah.SC <- mah.dist(HCP.M[HCP.SC], HCP.SC.cov)
+HCP.M$mah.SA <- mah.dist(select(HCP.M, starts_with("SA")), HCP.SA.cov)
+HCP.M$mah.CT <- mah.dist(select(HCP.M, starts_with("CT")), HCP.CT.cov)
+
+HCP.F$mah.tot <- mah.dist(HCP.F[c(1:(length(HCP.F)-8))], HCP.tot.cov) 
+HCP.F$mah.glo <- mah.dist(HCP.F[HCP.glo], HCP.glo.cov)
+HCP.F$mah.SC <- mah.dist(HCP.F[HCP.SC], HCP.SC.cov)
+HCP.F$mah.SA <- mah.dist(select(HCP.F, starts_with("SA")), HCP.SA.cov)
+HCP.F$mah.CT <- mah.dist(select(HCP.F, starts_with("CT")), HCP.CT.cov)
+
+HCP.mah <- rbind(HCP.M, HCP.F)
+
+##PNC
+#calculate covariance matrices on full sample
+PNC.tot.cov <- cov(PNC.norm[c(1:(length(PNC.norm)-3))])
+PNC.glo.cov <- cov(PNC.norm[PNC.glo])
+PNC.SC.cov <- cov(PNC.norm[PNC.SC])
+PNC.SA.cov <- cov(select(PNC.norm, starts_with("SA")))
+PNC.CT.cov <- cov(select(PNC.norm, starts_with("SA")))
+
+#calc distances
+PNC.M$mah.tot <- mah.dist(PNC.M[c(1:(length(PNC.M)-8))], PNC.tot.cov) 
+PNC.M$mah.glo <- mah.dist(PNC.M[PNC.glo], PNC.glo.cov)
+PNC.M$mah.SC <- mah.dist(PNC.M[PNC.SC], PNC.SC.cov)
+PNC.M$mah.SA <- mah.dist(select(PNC.M, starts_with("SA")), PNC.SA.cov)
+PNC.M$mah.CT <- mah.dist(select(PNC.M, starts_with("CT")), PNC.CT.cov)
+
+PNC.F$mah.tot <- mah.dist(PNC.F[c(1:(length(PNC.F)-8))], PNC.tot.cov) 
+PNC.F$mah.glo <- mah.dist(PNC.F[PNC.glo], PNC.glo.cov)
+PNC.F$mah.SC <- mah.dist(PNC.F[PNC.SC], PNC.SC.cov)
+PNC.F$mah.SA <- mah.dist(select(PNC.F, starts_with("SA")), PNC.SA.cov)
+PNC.F$mah.CT <- mah.dist(select(PNC.F, starts_with("CT")), PNC.CT.cov)
+
+PNC.mah <- rbind(PNC.M, PNC.F)
+
+#OASIS
+#calculate covariance matrices on full sample
+OASIS.tot.cov <- cov(OASIS.norm[c(1:(length(OASIS.norm)-3))])
+OASIS.glo.cov <- cov(OASIS.norm[OASIS.glo])
+OASIS.SC.cov <- cov(OASIS.norm[OASIS.SC])
+OASIS.SA.cov <- cov(select(OASIS.norm, starts_with("SA")))
+OASIS.CT.cov <- cov(select(OASIS.norm, starts_with("SA")))
+
+#calculate distance
+OASIS.M$mah.tot <- mah.dist(OASIS.M[c(1:(length(OASIS.M)-8))], OASIS.tot.cov) 
+OASIS.M$mah.glo <- mah.dist(OASIS.M[OASIS.glo], OASIS.glo.cov)
+OASIS.M$mah.SC <- mah.dist(OASIS.M[OASIS.SC], OASIS.SC.cov)
+OASIS.M$mah.SA <- mah.dist(select(OASIS.M, starts_with("SA")), OASIS.SA.cov)
+OASIS.M$mah.CT <- mah.dist(select(OASIS.M, starts_with("CT")), OASIS.CT.cov)
+
+OASIS.F$mah.tot <- mah.dist(OASIS.F[c(1:(length(OASIS.F)-8))], OASIS.tot.cov) 
+OASIS.F$mah.glo <- mah.dist(OASIS.F[OASIS.glo], OASIS.glo.cov)
+OASIS.F$mah.SC <- mah.dist(OASIS.F[OASIS.SC], OASIS.SC.cov)
+OASIS.F$mah.SA <- mah.dist(select(OASIS.F, starts_with("SA")), OASIS.SA.cov)
+OASIS.F$mah.CT <- mah.dist(select(OASIS.F, starts_with("CT")), OASIS.CT.cov)
+
+OASIS.mah <- rbind(OASIS.M, OASIS.F)
+
+#get stats from each dataset
+mah.ls <- c("PNC.mah", "HCP.mah", "OASIS.mah")
+mah.tot  <- lapply(mah.ls, function(i){
+  t.test(mah.tot ~ Sex , data=get(i))
+})
+#num=length(Total)
+num=4
+Totalstats.mah <- extractT(mah.tot, num)
+
+mah.glo  <- lapply(mah.ls, function(i){
+  t.test(mah.glo ~ Sex , data=get(i))
+})
+Globalstats.mah <- extractT(mah.glo, num)
+
+mah.SC  <- lapply(mah.ls, function(i){
+  t.test(mah.SC ~ Sex , data=get(i))
+})
+SCstats.mah <- extractT(mah.SC, num)
+
+mah.SA  <- lapply(mah.ls, function(i){
+  t.test(mah.SA ~ Sex , data=get(i))
+})
+SAstats.mah <- extractT(mah.SA, num)
+
+mah.CT  <- lapply(mah.ls, function(i){
+  t.test(mah.CT ~ Sex , data=get(i))
+})
+CTstats.mah <- extractT(mah.CT, num)
+
+names(Totalstats.mah) <- paste0('Tot_',names(Totalstats.mah))
+names(Globalstats.mah) <- paste0('Glo_',names(Globalstats.mah))
+names(SCstats.mah) <- paste0('SC_',names(SCstats.mah))
+names(SAstats.mah) <- paste0('SA_',names(SAstats.mah))
+names(CTstats.mah) <- paste0('CT_',names(CTstats.mah))
+
+stats.mah <- cbind(Totalstats.mah, Globalstats.mah, SCstats.mah, SAstats.mah, CTstats.mah)
+
+stats.mah <- apply(stats.mah,2,as.character)
+rownames(stats.mah) <- mah.ls
+Mah.out.file <- paste(outdir, "Mah_stats.csv", sep="/")
+write.csv(stats.mah, file=Mah.out.file, row.names = T)
+print(stats.mah)
+
+```
+#Plotting Mahalanobis distance
+```{r}
+
+HCP.plt.gl <- ggplot(HCP.mah, aes(x="Sex", fill= Sex, y=mah.glo)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,10) +
+                      stat_summary(aes(y=mah.glo), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+PNC.plt.gl <- ggplot(PNC.mah, aes(x="Sex", fill= Sex, y=mah.glo)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,10) +
+                      stat_summary(aes(y=mah.glo), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+OASIS.plt.gl <- ggplot(OASIS.mah, aes(x="Sex", fill= Sex, y=mah.glo)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,10) +
+                      stat_summary(aes(y=mah.glo), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+#SC
+HCP.plt.sc <- ggplot(HCP.mah, aes(x="Sex", fill= Sex, y=mah.SC)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,15) +
+                      stat_summary(aes(y=mah.SC), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+PNC.plt.sc <- ggplot(PNC.mah, aes(x="Sex", fill= Sex, y=mah.SC)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,15) +
+                      stat_summary(aes(y=mah.SC), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+OASIS.plt.sc <- ggplot(OASIS.mah, aes(x="Sex", fill= Sex, y=mah.SC)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,15) +
+                      stat_summary(aes(y=mah.SC), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+#SA
+HCP.plt.sa <- ggplot(HCP.mah, aes(x="Sex", fill= Sex, y=mah.SA)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,20) +
+                      stat_summary(aes(y=mah.SA), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+PNC.plt.sa <- ggplot(PNC.mah, aes(x="Sex", fill= Sex, y=mah.SA)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,20) +
+                      stat_summary(aes(y=mah.SA), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+OASIS.plt.sa <- ggplot(OASIS.mah, aes(x="Sex", fill= Sex, y=mah.SA)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,20) +
+                      stat_summary(aes(y=mah.SA), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+#CT
+HCP.plt.ct <- ggplot(HCP.mah, aes(x="Sex", fill= Sex, y=mah.CT)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,20) +
+                      stat_summary(aes(y=mah.CT), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+PNC.plt.ct <- ggplot(PNC.mah, aes(x="Sex", fill= Sex, y=mah.CT)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,20) +
+                      stat_summary(aes(y=mah.CT), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+OASIS.plt.ct <- ggplot(OASIS.mah, aes(x="Sex", fill= Sex, y=mah.CT)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Mahalanobis Distance") + ylim(0,20) +
+                      stat_summary(aes(y=mah.CT), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+plot_grid(PNC.plt.gl, HCP.plt.gl, OASIS.plt.gl, PNC.plt.sc, HCP.plt.sc, OASIS.plt.sc, PNC.plt.sa, HCP.plt.sa, OASIS.plt.sa, 
+          PNC.plt.ct, HCP.plt.ct, OASIS.plt.ct, align="hv", ncol = 3)
+
+mah.plt <- plot_grid(PNC.plt.gl, HCP.plt.gl, OASIS.plt.gl, PNC.plt.sc, HCP.plt.sc, OASIS.plt.sc, PNC.plt.sa, HCP.plt.sa, OASIS.plt.sa, 
+          PNC.plt.ct, HCP.plt.ct, OASIS.plt.ct, align="hv", ncol = 3)
+
+mah.plt.file <- paste(outdir, "Comb_Mahalanobis.png", sep="/")
+ggsave(mah.plt.file, mah.plt, dpi=300, width = 21, height = 20, units = "cm") #####
+
+
+```
+#PCA
+```{r}
+#prep for graphs
+area <- c("banks superior temporal", "caudal anterior cingulate",  "caudal middle frontal", "cuneus", "entorhinal", "fusiform",
+                   "inferior parietal", "inferior temporal","isthmus cingulate", "lateral occipital", "lateral orbitofrontal", "lingual",
+                   "medial orbito frontal", "middle temporal", "parahippocampal", "para central", "pars opercularis", "pars orbitalis",
+                   "pars triangularis", "pericalcarine", "post central", "posterior cingulate", "pre central", "precuneus", 
+                   "rostral anterior cingulate", "rostral middle frontal", "superior frontal", "superior parietal", "superior temporal",
+                   "supramarginal", "frontal pole", "temporal pole", "transverse temporal", "insula")
+left <- cbind(area, "left")
+right <- cbind(area, "right")
+hemis <- rbind(left, right) 
+colnames(hemis) <- c("area", "hemi")
+
+areaSC <- c("thalamus proper", "caudate", "putamen", "pallidum", "hippocampus", "amygdala", "accumbens")
+leftSC <- cbind(areaSC, "left")
+rightSC <- cbind(areaSC, "right")
+hemisSC <- rbind(leftSC, rightSC) 
+colnames(hemisSC) <- c("area", "hemi")
+
+#func for plotting loading on brain - cortex
+plot_loading_cort <- function(x){
+  load <- x$rotation[1:68, 1:10] # loadings for first PC 
+  plot <- as.data.frame(load, stringsAsFactors = F) %>% cbind(hemis)
+  
+  g <- ggseg(plot, mapping=aes(fill=as.numeric(abs(PC1))), colour="black", size=0.4) + 
+  theme(axis.title.x = element_blank(), legend.position="none", axis.text.x= element_blank()) + scale_fill_gradient(low="blue", high="red", limits=c(0.03,0.22))
+  return(g)
+}
+
+#func for plotting loading on brain - subcortex
+plot_loading_SC <- function(x){
+  load <- x$rotation[1:14, 1:10] # loadings for first PC 
+  plot <- as.data.frame(load, stringsAsFactors = F) %>% cbind(hemisSC)
+  
+  g <- ggseg(plot, atlas="aseg", mapping=aes(fill=as.numeric(abs(PC1))), colour="black", size=0.4) + 
+  theme(axis.title.x = element_blank(), legend.position="none", axis.text.x= element_blank()) + scale_fill_gradient(low="blue", high="red", limits=c(0,0.46))
+  return(g)
+}
+
+#do PCA per Sex
+#HCP
+HCP.M.pca.tot <-prcomp(HCP.M[c(1:(length(HCP.M)-13))], center = TRUE, scale. = TRUE)
+HCP.M.pca.glo <-prcomp(HCP.M[HCP.glo], center = TRUE, scale. = TRUE)
+HCP.M.pca.SC <-prcomp(HCP.M[HCP.SC], center = TRUE, scale. = TRUE)
+HCP.M.pca.SA <-prcomp(select(HCP.M, starts_with("SA")), center = TRUE, scale. = TRUE)
+HCP.M.pca.CT <-prcomp(select(HCP.M, starts_with("CT")), center = TRUE, scale. = TRUE)
+
+HCP.F.pca.tot <-prcomp(HCP.F[c(1:(length(HCP.F)-13))], center = TRUE, scale. = TRUE) 
+HCP.F.pca.glo <-prcomp(HCP.F[HCP.glo], center = TRUE, scale. = TRUE)
+HCP.F.pca.SC <-prcomp(HCP.F[HCP.SC], center = TRUE, scale. = TRUE)
+HCP.F.pca.SA <-prcomp(select(HCP.F, starts_with("SA")), center = TRUE, scale. = TRUE)
+HCP.F.pca.CT <-prcomp(select(HCP.F, starts_with("CT")), center = TRUE, scale. = TRUE)
+
+##PNC
+PNC.M.pca.tot <-prcomp(PNC.M[c(1:(length(PNC.M)-13))], center = TRUE, scale. = TRUE) 
+PNC.M.pca.glo <-prcomp(PNC.M[PNC.glo], center = TRUE, scale. = TRUE)
+PNC.M.pca.SC <-prcomp(PNC.M[PNC.SC], center = TRUE, scale. = TRUE)
+PNC.M.pca.SA <-prcomp(select(PNC.M, starts_with("SA")), center = TRUE, scale. = TRUE)
+PNC.M.pca.CT <-prcomp(select(PNC.M, starts_with("CT")), center = TRUE, scale. = TRUE)
+
+PNC.F.pca.tot <-prcomp(PNC.F[c(1:(length(PNC.F)-13))], center = TRUE, scale. = TRUE) 
+PNC.F.pca.glo <-prcomp(PNC.F[PNC.glo], center = TRUE, scale. = TRUE)
+PNC.F.pca.SC <-prcomp(PNC.F[PNC.SC], center = TRUE, scale. = TRUE)
+PNC.F.pca.SA <-prcomp(select(PNC.F, starts_with("SA")), center = TRUE, scale. = TRUE)
+PNC.F.pca.CT <-prcomp(select(PNC.F, starts_with("CT")), center = TRUE, scale. = TRUE)
+
+#OASIS
+OASIS.M.pca.tot <-prcomp(OASIS.M[c(1:(length(OASIS.M)-13))], center = TRUE, scale. = TRUE) 
+OASIS.M.pca.glo <-prcomp(OASIS.M[OASIS.glo], center = TRUE, scale. = TRUE)
+OASIS.M.pca.SC <-prcomp(OASIS.M[OASIS.SC], center = TRUE, scale. = TRUE)
+OASIS.M.pca.SA <-prcomp(select(OASIS.M, starts_with("SA")), center = TRUE, scale. = TRUE)
+OASIS.M.pca.CT <-prcomp(select(OASIS.M, starts_with("CT")), center = TRUE, scale. = TRUE)
+
+OASIS.F.pca.tot <-prcomp(OASIS.F[c(1:(length(OASIS.F)-13))], center = TRUE, scale. = TRUE) 
+OASIS.F.pca.glo <-prcomp(OASIS.F[OASIS.glo], center = TRUE, scale. = TRUE)
+OASIS.F.pca.SC <-prcomp(OASIS.F[OASIS.SC], center = TRUE, scale. = TRUE)
+OASIS.F.pca.SA <-prcomp(select(OASIS.F, starts_with("SA")), center = TRUE, scale. = TRUE)
+OASIS.F.pca.CT <-prcomp(select(OASIS.F, starts_with("CT")), center = TRUE, scale. = TRUE)
+
+#extract and plot loadings on brain
+PNC.F.CT <- plot_loading_cort(PNC.F.pca.CT)
+PNC.M.CT <- plot_loading_cort(PNC.M.pca.CT)
+PNC.F.SA <- plot_loading_cort(PNC.F.pca.SA)
+PNC.M.SA <- plot_loading_cort(PNC.M.pca.SA)
+PNC.F.SC <- plot_loading_SC(PNC.F.pca.SC)
+PNC.M.SC <- plot_loading_SC(PNC.M.pca.SC)
+
+HCP.F.CT <- plot_loading_cort(HCP.F.pca.CT)
+HCP.M.CT <- plot_loading_cort(HCP.M.pca.CT)
+HCP.F.SA <- plot_loading_cort(HCP.F.pca.SA)
+HCP.M.SA <- plot_loading_cort(HCP.M.pca.SA)
+HCP.F.SC <- plot_loading_SC(HCP.F.pca.SC)
+HCP.M.SC <- plot_loading_SC(HCP.M.pca.SC)
+
+OASIS.F.CT <- plot_loading_cort(OASIS.F.pca.CT)
+OASIS.M.CT <- plot_loading_cort(OASIS.M.pca.CT)
+OASIS.F.SA <- plot_loading_cort(OASIS.F.pca.SA)
+OASIS.M.SA <- plot_loading_cort(OASIS.M.pca.SA)
+OASIS.F.SC <- plot_loading_SC(OASIS.F.pca.SC)
+OASIS.M.SC <- plot_loading_SC(OASIS.M.pca.SC)
+
+#arrange
+plot_grid(PNC.F.SC, PNC.M.SC, HCP.F.SC, HCP.M.SC, OASIS.F.SC, OASIS.M.SC, align="hv", ncol = 6)
+plot_grid(PNC.F.SA, HCP.F.SA, OASIS.F.SA, PNC.M.SA, HCP.M.SA, OASIS.M.SA, align="hv", ncol = 3)
+plot_grid(PNC.F.CT, HCP.F.CT, OASIS.F.CT, PNC.M.CT, HCP.M.CT, OASIS.M.CT, align="hv", ncol = 3)
+
+#function to biplot pc1vpc2, pc1vpc3 & pc2vpc3 
+plot_pca_biplot <- function(x, metric, study){
+  if (metric== "CT" | metric =="SA"){
+    pca <-prcomp(select(x, starts_with(metric)), center = TRUE, scale. = TRUE)
+  } else if (metric== "SC"){
+    if (study == "PNC"){
+      pca <- prcomp(x[PNC.SC], center = TRUE, scale. = TRUE)
+    } else if (study == "HCP"){
+      pca <- prcomp(x[HCP.SC], center = TRUE, scale. = TRUE)
+    } else if (study == "OASIS"){
+      pca <- prcomp(x[OASIS.SC], center = TRUE, scale. = TRUE)
+    }
+  } else if (metric== "glo"){
+    if (study == "PNC"){
+      pca <- prcomp(x[PNC.glo], center = TRUE, scale. = TRUE)
+    } else if (study == "HCP"){
+      pca <- prcomp(x[HCP.glo], center = TRUE, scale. = TRUE)
+    } else if (study == "OASIS"){
+      pca <- prcomp(x[OASIS.glo], center = TRUE, scale. = TRUE)
+    }
+  } else if (metric== "total"){
+      pca <- prcomp(x[c(1:(length(x)-13))], center = TRUE, scale. = TRUE)
+  }
+  pca1v2 <- ggbiplot(pca, obs.scale = 1, var.scale = 1, varname.size = 1, alpha= 0,
+                     ellipse = TRUE, circle = FALSE, groups=x$Sex) +
+    theme_minimal()+ geom_point(aes(colour=x$Sex), size = 0.05, alpha = 0.3) +
+    theme(legend.position = "none", axis.title=element_text(size=4), axis.text=element_text(size=3))
+  pca1v3 <- ggbiplot(pca, choices = c(1,3), obs.scale = 1, var.scale = 1, varname.size = 1, alpha= 0,
+                     ellipse = TRUE, circle = FALSE, groups=x$Sex) +
+    theme_minimal() + geom_point(aes(colour=x$Sex), size = 0.05, alpha = 0.3) +
+    theme(legend.position = "none", axis.title=element_text(size=4), axis.text=element_text(size=3))
+  pca2v3 <- ggbiplot(pca, choices = c(2,3), obs.scale = 1, var.scale = 1, varname.size = 1, alpha= 0,
+                     ellipse = TRUE, circle = FALSE, groups=x$Sex) +
+    theme_minimal() + geom_point(aes(colour=x$Sex), size = 0.05, alpha = 0.3) +
+    theme(legend.position = "none", axis.title=element_text(size=4), axis.text=element_text(size=3))
+  grid <- plot_grid(pca1v2, pca1v3, pca2v3, align="hv", ncol = 1)
+  return(grid)
+}
+
+# #print variance
+# summary(PNC.F.pca.CT) # print variance accounted for
+# #print loadings
+# PNC.F.pca.CT$rotation[1:10, 1:10] #for first 10 PCs
+# #scree plot
+# plot(PNC.F.pca.CT,type="lines") 
+# #plot PC1 v PC2
+# ggbiplot(PNC.F.pca.CT, obs.scale = 1, var.scale = 1, varname.size = 5, ellipse = TRUE, circle = TRUE) +
+#   theme_minimal()+
+#   theme(legend.position = "bottom")
+
+
+
+
+
+PNC.tot.plt <- plot_pca_biplot(PNC.norm, "total", "PNC")
+PNC.glo.plt <- plot_pca_biplot(PNC.norm, "glo", "PNC")
+PNC.SC.plt <- plot_pca_biplot(PNC.norm, "SC", "PNC")
+PNC.CT.plt <- plot_pca_biplot(PNC.norm, "CT", "PNC")
+PNC.SA.plt <- plot_pca_biplot(PNC.norm, "SA", "PNC")
+
+HCP.tot.plt <- plot_pca_biplot(HCP.norm, "total", "HCP")
+HCP.glo.plt <- plot_pca_biplot(HCP.norm, "glo", "HCP")
+HCP.SC.plt <- plot_pca_biplot(HCP.norm, "SC", "HCP")
+HCP.CT.plt <- plot_pca_biplot(HCP.norm, "CT", "HCP")
+HCP.SA.plt <- plot_pca_biplot(HCP.norm, "SA", "HCP")
+
+OASIS.tot.plt <- plot_pca_biplot(OASIS.norm, "total", "OASIS")
+OASIS.glo.plt <- plot_pca_biplot(OASIS.norm, "glo", "OASIS")
+OASIS.SC.plt <- plot_pca_biplot(OASIS.norm, "SC", "OASIS")
+OASIS.CT.plt <- plot_pca_biplot(OASIS.norm, "CT", "OASIS")
+OASIS.SA.plt <- plot_pca_biplot(OASIS.norm, "SA", "OASIS")
+
+tot.plt <- plot_grid(PNC.tot.plt, HCP.tot.plt, OASIS.tot.plt, ncol=3)
+glo.plt <- plot_grid(PNC.glo.plt, HCP.glo.plt, OASIS.glo.plt, ncol=3)
+SC.plt <- plot_grid(PNC.SC.plt, HCP.SC.plt, OASIS.SC.plt, ncol=3)
+SA.plt <- plot_grid(PNC.SA.plt, HCP.SA.plt, OASIS.SA.plt, ncol=3)
+CT.plt <- plot_grid(PNC.CT.plt, HCP.CT.plt, OASIS.CT.plt, ncol=3)
+
+# #names and save
+tot.PCAplot.file <- paste(outdir, "PCAtot.png", sep="/")
+glo.PCAplot.file <- paste(outdir, "PCAglo.png", sep="/")
+SC.PCAplot.file <- paste(outdir, "PCAsc.png", sep="/")
+SA.PCAplot.file <- paste(outdir, "PCAsa.png", sep="/")
+CT.PCAplot.file <- paste(outdir, "PCAct.png", sep="/")
+ggsave(tot.PCAplot.file, tot.plt, dpi=300, width = 21, height = 12, units = "cm")
+ggsave(glo.PCAplot.file, glo.plt, dpi=300, width = 21, height = 12, units = "cm")
+ggsave(SC.PCAplot.file, SC.plt, dpi=300, width = 21, height = 12, units = "cm")
+ggsave(SA.PCAplot.file, SA.plt, dpi=300, width = 21, height = 12, units = "cm")
+ggsave(CT.PCAplot.file, CT.plt, dpi=300, width = 21, height = 12, units = "cm")
+# 
+# ####### for mean
+# CTplot.df <- as.data.frame(CT_out_tbl, stringsAsFactors = F) %>% cbind(hemis)
+# 
+# ## subsets of data that was significant
+# CTplot_sig.raw <- subset(CTplot.df, as.numeric(AgeResid_Padj) < 0.05)
+# CTplot_sig.cor <- subset(CTplot.df, as.numeric(FullResid_Padj) < 0.05)
+# 
+# 
+
+
+```
+

@@ -1,0 +1,963 @@
+---
+title: "Unit Sphere"
+author: "nforde"
+date: "November 15, 2018"
+output: html_document
+---
+
+## get libraries/set paths
+```{r}
+library(tidyverse)
+library(broom)
+library(knitr)
+library(car)
+library(cowplot)
+library(lme4)
+library(ggseg)
+library(gridExtra)
+library(reshape2)
+library(rgl)
+library(movMF)
+library(mosaic)
+library(MatchIt)
+#library(MASS)
+
+## set all the paths
+#HCP
+HCP.res <- read.csv("/projects/nforde/HCP/stats/HCP/Allres.csv")
+PNC.res <- read.csv("/projects/nforde/HCP/stats/PNC/Allres.csv")
+OASIS.res <- read.csv("/projects/nforde/HCP/stats/OASIS/Allres.csv")
+
+HCP.norm <- HCP.res[c(2:length(HCP.res))]
+PNC.norm <- PNC.res[c(2:length(PNC.res))]
+OASIS.norm <- OASIS.res[c(2:length(OASIS.res))]
+
+names(HCP.norm)[names(HCP.norm) == 'Age_in_Yrs'] <- 'Age'
+names(PNC.norm)[names(PNC.norm) == 'age_at_cnb'] <- 'Age'
+
+outdir <- "/projects/nforde/HCP/stats/combined_figures"
+
+```
+## define functions
+```{r}
+
+cos.dist <- function(x){
+  y <- cent(x, 200)
+  sim <- as.matrix(x) %*% y 
+  deg <- acos(sim) * 180/pi
+  return(deg) 
+}
+
+unit1 <- function(x) {x / sqrt(sum(x^2))} #where x is the vector to normalise
+
+MFkappa <- function(x){
+  MF <- movMF(as.matrix(x[c(1:(length(x)-4))]), k=2, ids=x$sex.coded)
+  kappa <- sqrt(rowSums(MF$theta^2))
+  return(kappa)
+}
+
+MFkappa.shuffle <- function(x){
+  MF <- movMF(as.matrix(x[c(1:(length(x)-4))]), k=2, ids=shuffle(x$sex.coded))
+  kappa <- sqrt(rowSums(MF$theta^2))
+  kappa.diff <- kappa[1] - kappa[2]
+  return(kappa.diff)
+}
+
+MFkappa.perm <- function(x){
+  sub <- x
+  sub$treat <- ifelse(sub$Sex == "Male"| sub$Sex == "M", 1, 0)
+  
+  match.it <- matchit(treat ~ Age, data=sub)
+  mat.df <- match.data(match.it)
+
+  kappa <- MFkappa(mat.df[c(1:(length(mat.df)-3))])
+  obsdiff <- kappa[1] - kappa[2]
+  
+  kappa.diffs <- do(numsim) * MFkappa.shuffle(mat.df[c(1:(length(mat.df)-3))])
+  pvalue <- sum(abs(kappa.diffs) >= abs(obsdiff)) / numsim
+  
+  hst <- ggplot(kappa.diffs, aes(X1)) + geom_histogram(color="black", fill ="white") + 
+    geom_vline(aes(xintercept=obsdiff), color="red") +
+  labs(title="Null Kappa Distribution",x="Difference in Kappa")
+  
+  return(list(pvalue, hst, kappa))
+}
+
+get_kappaF_mat <- function(x){
+  sub <- x
+  sub$treat <- ifelse(sub$Sex == "Male"| sub$Sex == "M", 1, 0)
+  
+  match.it <- matchit(treat ~ Age, data=sub)
+  mat.df <- match.data(match.it)
+  kappa <- MFkappa(mat.df[c(1:(length(mat.df)-3))])
+  return(kappa[[2]])
+}
+
+bootFkappa <- function(x){
+  kappa <- do(numsim) * get_kappaF_mat(x)
+  
+  hst <- ggplot(kappa, aes(get_kappaF_mat)) + geom_histogram(color="black", fill ="white") 
+  return(list(hst, kappa))
+}
+
+get_kappaM_80 <- function(x){
+  sub <- x %>% filter(Sex == "Male" | Sex =="M") %>% sample_frac(.8)
+  MF <- movMF(as.matrix(sub[c(1:(length(x)-4))]), k=1)
+  kappa <- sqrt(rowSums(MF$theta^2))
+  return(kappa)
+}
+
+bootMkappa <- function(x){
+  kappa <- do(numsim) * get_kappaM_80(x)
+  
+  hst <- ggplot(kappa, aes(X1)) + geom_histogram(color="black", fill ="white") 
+  return(list(hst, kappa))
+}
+
+get_colors <- function(groups, group.col = palette()){
+  groups <- as.factor(groups)
+  ngrps <- length(levels(groups))
+  if(ngrps > length(group.col)) 
+    group.col <- rep(group.col, ngrps)
+  color <- group.col[as.numeric(groups)]
+  names(color) <- as.vector(groups)
+  return(color)
+}
+
+extractT <- function(i, num){
+  Tval <- lapply((i), function(f) f$statistic)
+  Pval <- lapply((i), function(f) f$p.value)
+  dof <- lapply((i), function(f) f$parameter)
+   
+  Padj <- p.adjust(Pval, method="fdr", n=num)
+  Cohen <- (as.numeric(Tval)*2)/sqrt(as.numeric(dof))
+  
+  merged <- as.data.frame(cbind(Tval, Pval, Padj, Cohen))
+  return(merged)
+
+}
+
+GeomSplitViolin <- ggproto("GeomSplitViolin", GeomViolin, draw_group = function(self, data, ..., draw_quantiles = NULL){
+  data <- transform(data, xminv = x - violinwidth * (x - xmin), xmaxv = x + violinwidth * (xmax - x))
+  grp <- data[1,'group']
+  newdata <- plyr::arrange(transform(data, x = if(grp%%2==1) xminv else xmaxv), if(grp%%2==1) y else -y)
+  newdata <- rbind(newdata[1, ], newdata, newdata[nrow(newdata), ], newdata[1, ])
+  newdata[c(1,nrow(newdata)-1,nrow(newdata)), 'x'] <- round(newdata[1, 'x']) 
+  if (length(draw_quantiles) > 0 & !scales::zero_range(range(data$y))) {
+    stopifnot(all(draw_quantiles >= 0), all(draw_quantiles <= 
+                                              1))
+    quantiles <- ggplot2:::create_quantile_segment_frame(data, draw_quantiles)
+    aesthetics <- data[rep(1, nrow(quantiles)), setdiff(names(data), c("x", "y")), drop = FALSE]
+    aesthetics$alpha <- rep(1, nrow(quantiles))
+    both <- cbind(quantiles, aesthetics)
+    quantile_grob <- GeomPath$draw_panel(both, ...)
+    ggplot2:::ggname("geom_split_violin", grid::grobTree(GeomPolygon$draw_panel(newdata, ...), quantile_grob))
+  }
+  else {
+    ggplot2:::ggname("geom_split_violin", GeomPolygon$draw_panel(newdata, ...))
+  }
+})
+
+geom_split_violin <- function (mapping = NULL, data = NULL, stat = "ydensity", position = "identity", ..., draw_quantiles = NULL, trim = TRUE, scale = "area", na.rm = FALSE, show.legend = NA, inherit.aes = TRUE) {
+  layer(data = data, mapping = mapping, stat = stat, geom = GeomSplitViolin, position = position, show.legend = show.legend, inherit.aes = inherit.aes, params = list(trim = trim, scale = scale, draw_quantiles = draw_quantiles, na.rm = na.rm, ...))
+}
+
+
+```
+
+# make unit vector
+```{r}
+#some list of variable names to keep things easier later
+HCP.SC <- c("L_ThalamusProperFull.resid", "L_CaudateFull.resid", "L_PutamenFull.resid", "L_PallidumFull.resid",
+            "L_HippoFull.resid", "L_AmygdalaFull.resid", "L_AccumbensAreaFull.resid", "R_ThalamusProperFull.resid",
+            "R_CaudateFull.resid", "R_PutamenFull.resid", "R_PallidumFull.resid", "R_HippoFull.resid",
+            "R_AmygdalaFull.resid", "R_AccumbensAreaFull.resid")
+
+PNC.SC <- c("Left.Thalamus.ProperFull.resid", "Left.CaudateFull.resid", "Left.PutamenFull.resid",
+            "Left.PallidumFull.resid", "Left.HippocampusFull.resid", "Left.AmygdalaFull.resid",
+            "Left.Accumbens.areaFull.resid", "Right.Thalamus.ProperFull.resid", "Right.CaudateFull.resid",
+            "Right.PutamenFull.resid", "Right.PallidumFull.resid", "Right.HippocampusFull.resid",
+            "Right.AmygdalaFull.resid", "Right.Accumbens.areaFull.resid")
+
+OASIS.SC <- c("lh_Thalamus.ProperFull.resid", "lh_CaudateFull.resid", "lh_PutamenFull.resid", "lh_PallidumFull.resid",
+                                "lh_HippocampusFull.resid", "lh_AmygdalaFull.resid", "lh_Accumbens.areaFull.resid",
+                               "rh_Thalamus.ProperFull.resid", "rh_CaudateFull.resid", "rh_PutamenFull.resid",
+           "rh_PallidumFull.resid", "rh_HippocampusFull.resid", "rh_AmygdalaFull.resid", "rh_Accumbens.areaFull.resid")
+
+HCP.glo <- c("Total_GMFull.resid", "Tot_WMFull.resid", "Cerebellum_CortFull.resid", "Cerebellum_WMFull.resid")
+PNC.glo <- c("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid",
+                                   "Cerebellum_WMFull.resid")
+OASIS.glo <- c("TotalGrayFull.resid", "CorticalWhiteMatterFull.resid", "Cerebellum_CortFull.resid",
+                                   "Cerebellum_WMFull.resid")
+
+
+#HCP
+HCP.norm$sex.coded <- NA
+HCP.norm$sex.coded[HCP.norm$Sex=="Male"] <- 1
+HCP.norm$sex.coded[HCP.norm$Sex=="Female"] <- 2
+
+HCP.unit <- apply(HCP.norm[c(1:(length(HCP.norm)-4))], 1, unit1) %>% t() %>% cbind(HCP.norm[c("sex.coded", "Age", "Subject", "Sex")])
+HCP.unit.global <- apply(HCP.norm[HCP.glo], 1, unit1) %>% t() %>% cbind(HCP.norm[c("sex.coded", "Age", "Subject", "Sex")])
+HCP.unit.SC <- apply(HCP.norm[HCP.SC], 1, unit1) %>% t() %>% cbind(HCP.norm[c("sex.coded", "Age", "Subject", "Sex")])
+HCP.unit.SA <- apply(dplyr::select(HCP.norm, starts_with("SA")), 1, unit1) %>% t() %>% cbind(HCP.norm[c("sex.coded", "Age", "Subject", "Sex")])
+HCP.unit.CT <- apply(dplyr::select(HCP.norm, starts_with("CT")), 1, unit1) %>% t() %>% cbind(HCP.norm[c("sex.coded", "Age", "Subject", "Sex")])
+
+## PNC
+PNC.norm$sex.coded <- NA
+PNC.norm$sex.coded[PNC.norm$Sex=="M"] <- 1
+PNC.norm$sex.coded[PNC.norm$Sex=="F"] <- 2
+
+PNC.unit <- apply(PNC.norm[c(1:(length(PNC.norm)-4))], 1, unit1) %>% t() %>% cbind(PNC.norm[c("sex.coded", "Age", "ID", "Sex")])
+PNC.unit.global <- apply(PNC.norm[PNC.glo], 1, unit1) %>% t() %>% cbind(PNC.norm[c("sex.coded", "Age", "ID", "Sex")])
+PNC.unit.SC <- apply(PNC.norm[PNC.SC], 1, unit1) %>%  t() %>% cbind(PNC.norm[c("sex.coded", "Age", "ID", "Sex")])
+PNC.unit.SA <- apply(dplyr::select(PNC.norm, starts_with("SA")), 1, unit1) %>% t() %>% cbind(PNC.norm[c("sex.coded", "Age", "ID", "Sex")])
+PNC.unit.CT <- apply(dplyr::select(PNC.norm, starts_with("CT")), 1, unit1) %>% t() %>% cbind(PNC.norm[c("sex.coded", "Age", "ID", "Sex")])
+
+## OASIS
+OASIS.norm$sex.coded <- NA
+OASIS.norm$sex.coded[OASIS.norm$Sex=="M"] <- 1
+OASIS.norm$sex.coded[OASIS.norm$Sex=="F"] <- 2
+
+OASIS.unit <- apply(OASIS.norm[c(1:(length(OASIS.norm)-4))], 1, unit1) %>% t() %>% cbind(OASIS.norm[c("sex.coded", "Age", "Subject", "Sex")])
+OASIS.unit.global <- apply(OASIS.norm[OASIS.glo], 1, unit1) %>% t() %>% cbind(OASIS.norm[c("sex.coded", "Age", "Subject", "Sex")])
+OASIS.unit.SC <- apply(OASIS.norm[OASIS.SC], 1, unit1) %>%  t() %>% cbind(OASIS.norm[c("sex.coded", "Age", "Subject", "Sex")])
+OASIS.unit.SA <- apply(dplyr::select(OASIS.norm, starts_with("SA")), 1, unit1) %>% t() %>% cbind(OASIS.norm[c("sex.coded", "Age", "Subject", "Sex")])
+OASIS.unit.CT <- apply(dplyr::select(OASIS.norm, starts_with("CT")), 1, unit1) %>% t() %>% cbind(OASIS.norm[c("sex.coded", "Age", "Subject", "Sex")])
+
+```
+# Mises-Fisher   
+```{r}
+##########################################
+##      Don't use! It's unstable        ##
+##########################################
+# 
+# numsim <- 1000
+# 
+# ########### HCP ################
+# 
+# # Code sex as 1=male, 2=female and apply Mises-Fisher clustering with given class (sex) 
+# 
+# #total
+# # HCP.Mises <- movMF(as.matrix(HCP.unit[c(1:(length(HCP.unit)-4))]), k=2, ids=HCP.unit$sex.coded)
+# # #calculate kappa (distribution) and mu (mean direction) 
+# # HCP.kappa <-  sqrt(rowSums(HCP.Mises$theta^2))
+# # #HCP.mu <- HCP.Mises$theta/HCP.kappa
+# 
+# #global
+# HCPbootF.glo <- bootFkappa(HCP.unit.global)
+# HCPbootF.glo.hist <- HCPbootF.glo[[1]]
+# HCPbootM.glo <- bootMkappa(HCP.unit.global)
+# HCPbootM.glo.hist <- HCPbootM.glo[[1]]
+# HCP.kappa.global.perm <- MFkappa.perm(HCP.unit.global)
+# HCP.kappa.global.p <- HCP.kappa.global.perm[[1]]
+# HCP.glo.hist <-HCP.kappa.global.perm[[2]]
+# HCP.kappa.global <- HCP.kappa.global.perm[[3]]
+# #sub cortical
+# HCPbootF.SC <- bootFkappa(HCP.unit.SC)
+# HCPbootF.SC.hist <- HCPbootF.SC[[1]]
+# HCPbootM.SC <- bootMkappa(HCP.unit.SC)
+# HCPbootM.SC.hist <- HCPbootM.SC[[1]]
+# HCP.kappa.SC.perm <- MFkappa.perm(HCP.unit.SC)
+# HCP.kappa.SC.p <- HCP.kappa.SC.perm[[1]]
+# HCP.SC.hist <- HCP.kappa.SC.perm[[2]]
+# HCP.kappa.SC <- HCP.kappa.SC.perm[[3]]
+# #SA
+# HCPbootF.SA <- bootFkappa(HCP.unit.SA)
+# HCPbootF.SA.hist <- HCPbootF.SA[[1]]
+# HCPbootM.SA <- bootMkappa(HCP.unit.SA)
+# HCPbootM.SA.hist <- HCPbootM.SA[[1]]
+# HCP.kappa.SA.perm <- MFkappa.perm(HCP.unit.SA)
+# HCP.kappa.SA.p <- HCP.kappa.SA.perm[[1]]
+# HCP.SA.hist <- HCP.kappa.SA.perm[[2]]
+# HCP.kappa.SA <- HCP.kappa.SA.perm[[3]]
+# #CT
+# HCPbootF.CT <- bootFkappa(HCP.unit.CT)
+# HCPbootF.CT.hist <- HCPbootF.CT[[1]]
+# HCPbootM.CT <- bootMkappa(HCP.unit.CT)
+# HCPbootM.CT.hist <- HCPbootM.CT[[1]]
+# HCP.kappa.CT.perm <- MFkappa.perm(HCP.unit.CT)
+# HCP.kappa.CT.p <- HCP.kappa.CT.perm[[1]]
+# HCP.CT.hist <- HCP.kappa.CT.perm[[2]]
+# HCP.kappa.CT <- HCP.kappa.CT.perm[[3]]
+# #merge
+# HCPstats <- t(cbind(HCP.kappa.global, HCP.kappa.SC, HCP.kappa.SA, HCP.kappa.CT))
+# HCPpval <- rbind(HCP.kappa.global.p, HCP.kappa.SC.p, HCP.kappa.SA.p, HCP.kappa.CT.p)
+# HCPstats <- cbind(HCPstats, HCPpval)
+# colnames(HCPstats) <- c("HCP.males", "HCP.females", "HCP.pval")
+# #HCPstats
+# 
+# 
+# ########### PNC ################
+# # Code sex as 1=male, 2=female and apply Mises-Fisher clustering with given class (sex) 
+# 
+# #global
+# PNCbootF.glo <- bootFkappa(PNC.unit.global)
+# PNCbootF.glo.hist <- PNCbootF.glo[[1]]
+# PNCbootM.glo <- bootMkappa(PNC.unit.global)
+# PNCbootM.glo.hist <- PNCbootM.glo[[1]]
+# PNC.kappa.global.perm <- MFkappa.perm(PNC.unit.global)
+# PNC.kappa.global.p <- PNC.kappa.global.perm[[1]]
+# PNC.glo.hist <- PNC.kappa.global.perm[[2]]
+# PNC.kappa.global <- PNC.kappa.global.perm[[3]]
+# #sub cortical
+# PNCbootF.SC <- bootFkappa(PNC.unit.SC)
+# PNCbootF.SC.hist <- PNCbootF.SC[[1]]
+# PNCbootM.SC <- bootMkappa(PNC.unit.SC)
+# PNCbootM.SC.hist <- PNCbootM.SC[[1]]
+# PNC.kappa.SC.perm <- MFkappa.perm(PNC.unit.SC)
+# PNC.kappa.SC.p <- PNC.kappa.SC.perm[[1]]
+# PNC.SC.hist <- PNC.kappa.SC.perm[[2]]
+# PNC.kappa.SC <- PNC.kappa.SC.perm[[3]]
+# #SA
+# PNCbootF.SA <- bootFkappa(PNC.unit.SA)
+# PNCbootF.SA.hist <- PNCbootF.SA[[1]]
+# PNCbootM.SA <- bootMkappa(PNC.unit.SA)
+# PNCbootM.SA.hist <- PNCbootM.SA[[1]]
+# PNC.kappa.SA.perm <- MFkappa.perm(PNC.unit.SA)
+# PNC.kappa.SA.p <- PNC.kappa.SA.perm[[1]]
+# PNC.SA.hist <- PNC.kappa.SA.perm[[2]]
+# PNC.kappa.SA <- PNC.kappa.SA.perm[[3]]
+# #CT
+# PNCbootF.CT <- bootFkappa(PNC.unit.CT)
+# PNCbootF.CT.hist <- PNCbootF.CT[[1]]
+# PNCbootM.CT <- bootMkappa(PNC.unit.CT)
+# PNCbootM.CT.hist <- PNCbootM.CT[[1]]
+# PNC.kappa.CT.perm <- MFkappa.perm(PNC.unit.CT)
+# PNC.kappa.CT.p <- PNC.kappa.CT.perm[[1]]
+# PNC.CT.hist <- PNC.kappa.CT.perm[[2]]
+# PNC.kappa.CT <- PNC.kappa.CT.perm[[3]]
+# #merge
+# PNCstats <- t(cbind(PNC.kappa.global, PNC.kappa.SC, PNC.kappa.SA, PNC.kappa.CT))
+# PNCpval <- rbind(PNC.kappa.global.p, PNC.kappa.SC.p, PNC.kappa.SA.p, PNC.kappa.CT.p)
+# PNCstats <- cbind(PNCstats, PNCpval)
+# colnames(PNCstats) <- c("PNC.males", "PNC.females", "PNC.pval")
+# #PNCstats
+# 
+# ########### OASIS ################
+# 
+# #global
+# OASISbootF.glo <- bootFkappa(OASIS.unit.global)
+# OASISbootF.glo.hist <- OASISbootF.glo[[1]]
+# OASISbootM.glo <- bootMkappa(OASIS.unit.global)
+# OASISbootM.glo.hist <- OASISbootM.glo[[1]]
+# OASIS.kappa.global.perm <- MFkappa.perm(OASIS.unit.global)
+# OASIS.kappa.global.p <- OASIS.kappa.global.perm[[1]]
+# OASIS.glo.hist <- OASIS.kappa.global.perm[[2]]
+# OASIS.kappa.global <- OASIS.kappa.global.perm[[3]]
+# #sub cortical
+# OASISbootF.SC <- bootFkappa(OASIS.unit.SC)
+# OASISbootF.SC.hist <- OASISbootF.SC[[1]]
+# OASISbootM.SC <- bootMkappa(OASIS.unit.SC)
+# OASISbootM.SC.hist <- OASISbootM.SC[[1]]
+# OASIS.kappa.SC.perm <- MFkappa.perm(OASIS.unit.SC)
+# OASIS.kappa.SC.p <- OASIS.kappa.SC.perm[[1]]
+# OASIS.SC.hist <- OASIS.kappa.SC.perm[[2]]
+# OASIS.kappa.SC <- OASIS.kappa.SC.perm[[3]]
+# #SA
+# OASISbootF.SA <- bootFkappa(OASIS.unit.SA)
+# OASISbootF.SA.hist <- OASISbootF.SA[[1]]
+# OASISbootM.SA <- bootMkappa(OASIS.unit.SA)
+# OASISbootM.SA.hist <- OASISbootM.SA[[1]]
+# OASIS.kappa.SA.perm <- MFkappa.perm(OASIS.unit.SA)
+# OASIS.kappa.SA.p <- OASIS.kappa.SA.perm[[1]]
+# OASIS.SA.hist <- OASIS.kappa.SA.perm[[2]]
+# OASIS.kappa.SA <- OASIS.kappa.SA.perm[[3]]
+# #CT
+# OASISbootF.CT <- bootFkappa(OASIS.unit.CT)
+# OASISbootF.CT.hist <- OASISbootF.CT[[1]]
+# OASISbootM.CT <- bootMkappa(OASIS.unit.CT)
+# OASISbootM.CT.hist <- OASISbootM.CT[[1]]
+# OASIS.kappa.CT.perm <- MFkappa.perm(OASIS.unit.CT)
+# OASIS.kappa.CT.p <- OASIS.kappa.CT.perm[[1]]
+# OASIS.CT.hist <- OASIS.kappa.CT.perm[[2]]
+# OASIS.kappa.CT <- OASIS.kappa.CT.perm[[3]]
+# #merge
+# OASISstats <- t(cbind(OASIS.kappa.global, OASIS.kappa.SC, OASIS.kappa.SA, OASIS.kappa.CT))
+# OASISpval <- rbind(OASIS.kappa.global.p, OASIS.kappa.SC.p, OASIS.kappa.SA.p, OASIS.kappa.CT.p)
+# OASISstats <- cbind(OASISstats, OASISpval)
+# colnames(OASISstats) <- c("OASIS.males", "OASIS.females", "OASIS.pval")
+# 
+# ## merge and print out stats from all groups
+# VonMisesStats <- cbind(PNCstats, HCPstats, OASISstats)
+# rownames(VonMisesStats) <- c("global", "subcortical", "surface area", "cortical thickness")
+# VonMisesStats
+# vMF.out.file <- paste(outdir, "vMF_stats.csv", sep="/")
+# write.csv(VonMisesStats, file=vMF.out.file, row.names = T)
+# 
+# plot_grid(PNC.glo.hist, HCP.glo.hist, OASIS.glo.hist, 
+#           PNC.SC.hist, HCP.SC.hist, OASIS.SC.hist, PNC.SA.hist, HCP.SA.hist, OASIS.SA.hist, 
+#           PNC.CT.hist, HCP.CT.hist, OASIS.CT.hist, align="hv", ncol = 3)
+# 
+# vMF.plt <- plot_grid(PNC.glo.hist, HCP.glo.hist, OASIS.glo.hist, 
+#                      PNC.SC.hist, HCP.SC.hist, OASIS.SC.hist, PNC.SA.hist, HCP.SA.hist, OASIS.SA.hist, 
+#           PNC.CT.hist, HCP.CT.hist, OASIS.CT.hist, align="hv", ncol = 3)
+# 
+# vMF.plt.file <- paste(outdir, "Comb_vMF.png", sep="/")
+# ggsave(vMF.plt.file, vMF.plt, dpi=300, width = 21, height = 20, units = "cm") #####
+# 
+# Fkappa.plt <- plot_grid(PNCbootF.glo.hist, HCPbootF.glo.hist, OASISbootF.glo.hist, 
+#                         PNCbootF.SC.hist, HCPbootF.SC.hist, OASISbootF.SC.hist, 
+#                         PNCbootF.SA.hist, HCPbootF.SA.hist, OASISbootF.SA.hist, 
+#           PNCbootF.CT.hist, HCPbootF.CT.hist, OASISbootF.CT.hist, align="hv", ncol = 3)
+# 
+# Fkappa.plt.file <- paste(outdir, "Female_kappa_dist.png", sep="/")
+# ggsave(Fkappa.plt.file, Fkappa.plt, dpi=300, width = 21, height = 20, units = "cm") #####
+# 
+# Mkappa.plt <- plot_grid(PNCbootM.glo.hist, HCPbootM.glo.hist, OASISbootM.glo.hist, 
+#                         PNCbootM.SC.hist, HCPbootM.SC.hist, OASISbootM.SC.hist, 
+#                         PNCbootM.SA.hist, HCPbootM.SA.hist, OASISbootM.SA.hist, 
+#           PNCbootM.CT.hist, HCPbootM.CT.hist, OASISbootM.CT.hist, align="hv", ncol = 3)
+# 
+# Mkappa.plt.file <- paste(outdir, "Male_kappa_dist.png", sep="/")
+# ggsave(Mkappa.plt.file, Mkappa.plt, dpi=300, width = 21, height = 20, units = "cm") #####
+```
+## graphing / testing
+```{r}
+
+# # plot the best vector
+# 
+# #get example 3 variable unit vector
+# HCP.unit3 <- HCP.res[c(2:4)] %>% rowwise() %>% scalar1()
+# 
+  
+#   
+# 
+# x3.unit <- apply(HCP.norm[c(1:3)], 1, unit1) %>% t() %>% cbind(HCP.norm[c("sex.coded", "Age", "Subject", "Sex")])
+# yM <- filter(x3.unit, sex.coded==1) %>% select(c(1:3)) %>% colMeans() %>% unit1() 
+# yF <- filter(x3.unit, sex.coded==2) %>% select(c(1:3)) %>% colMeans() %>% unit1()
+# 
+# 
+# rgl.open()
+# 
+# #rgl.spheres()
+# #rgl.sphgrid()
+# rgl.points(x3.unit[c(1:3)], color=x3.unit$sex.coded)
+# rgl.bg(color="white")
+# 
+# rgl.points( 0.1244976, -0.2025884, 0.9713178,  color="blue", size=10) #mean
+# rgl.points(0.5732461, 0.5646552, 0.5937621,  color="red", size=10) #from cent
+# 
+# 
+# # rgl.lines(c(0,1), c(0, 0), c(0, 0), color = "black")
+# # rgl.lines(c(0, 0), c(0,1), c(0, 0), color = "red")
+# # rgl.lines(c(0, 0), c(0, 0), c(0,1), color = "green")
+# 
+# rgl.lines(c(min(x3.unit$Total_GMFull.resid), max(x3.unit$Total_GMFull.resid)), c(0, 0), c(0, 0), color = "black")
+# rgl.lines(c(0, 0), c(min(HCP.res$Cerebellum_CortFull.resid),max(x3.unit$Cerebellum_CortFull.resid)), c(0, 0), color = "red")
+# rgl.lines(c(0, 0), c(0, 0), c(min(x3.unit$Tot_WMFull.resid),max(x3.unit$Tot_WMFull.resid)), color = "green")
+# 
+# rgl.close()
+# 
+# x3.M <- subset(x3.unit, Sex =="Male")
+# x3.F <- subset(x3.unit, Sex =="Female")
+# 
+# x3.M$cos <- filter(x3.unit, sex.coded ==1) %>% select(1:3) %>% cos.dist()
+# x3.F$cos <- filter(x3.unit, sex.coded ==2) %>% select(1:3) %>% cos.dist()
+# x3.cos <- rbind(x3.M, x3.F)
+# 
+# ggplot(x3.cos, aes(x=Sex, fill= Sex, y=cos)) + geom_split_violin() +
+#               theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+#                       axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+#                       ylab("Cosine Angle (deg)") + ylim(0,180) +
+#                       stat_summary(aes(y=cos), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+#                             size=0.5, position = position_dodge(width = .75))
+
+
+```
+#functions for calculating multi-dimensional centroids properly
+```{r}
+# https://stats.stackexchange.com/questions/220480/centroid-of-nearest-neighbours-on-a-hypersphere-as-a-method-for-applying-crossov
+# A quick and dirty approach is to simply take the standard weighted average, then renormalize the resulting vector so that it lies on the surface of the sphere. This is an approximate solution that might work in certain cases. There is precedent in the literature.
+# 
+# A more principled solution is to generalize the weighted average to spherical geometries by recasting it as an optimization problem. In Euclidean space, the weighted average can be written as the point that minimizes the weighted sum of squared distances to each of the input points. The solution to this optimization problem is the familiar expression for the weighted average. Say we want to take the weighted average of points {𝑥1,...,𝑥𝑛}∈ℝ𝑑. The corresponding weights for each point are given by {𝑤1,...,𝑤𝑛}. The weights are nonnegative and sum to 1. The weighted average 𝑎∗ is given by:
+# 
+# 𝑎∗=argmin𝑎∑𝑖=1𝑛𝑤𝑖‖𝑥𝑖−𝑎‖2
+# This problem can be generalized to spherical geometries by replacing the Euclidean distance with the geodesic distance on the surface of the sphere (i.e. how far you'd have to travel along the surface of the sphere to get from one point to another).
+# libra
+# 𝑎∗=argmin𝑎∑𝑖=1𝑛𝑤𝑖𝐷𝑆(𝑥𝑖,𝑎)2
+# Here, 𝐷𝑠(𝑥𝑖,𝑎) denotes the geodesic distance between points 𝑥𝑖 and 𝑎 on the surface of sphere 𝑆. BTW, this formulation of the problem is for (hyper)spheres of any dimension, not just 3.
+# 
+# I'm not aware of a closed form solution for this problem, but the following paper gives two iterative algorithms. They report runtimes of a few hundred microseconds for taking the weighted average of 12 points on a 3-sphere. They also discuss how to perform interpolation on the surface of a sphere, which seems relevant to some of the use cases you're considering.
+
+#calc centroid (mu) for males and females (r/||r||, r= sum(x) , which in effect is the mean because they're all unit vectors! huzzar!)
+
+############ JERRY's python ###############
+# def compute_reverse_givens(a):
+#     '''
+#     Define <a> to be a vector in 2 dimensional space. 
+#     Find the rotation matrix that aligns a to the axis z = [0,r] 
+#     Where r is the magnitude of <a>
+#     
+#     This method is a slight variation (x_j = x_N instead of x_j = x_1) of
+#     N-dimensional Rotation Matrix Generation Algorithm
+#     (Zhelezov, O.I 2017)
+#     '''
+#     
+#     hyp = np.hypot(a[0],a[1])
+#     if np.greater(hyp**2,0):
+#         s_k = a[0]/hyp
+#         c_k = a[1]/hyp
+#     else:
+#         s_k = 1
+#         c_k = 0
+#     return np.array([ [c_k, -s_k] , [s_k, c_k] ])
+# 	
+# #Reverse algorithm
+# N = x.shape[0] - 1
+# G = np.eye(N+1,N+1,dtype=np.float64)
+# x_bar = x
+# for k in np.arange(0,N):
+#     
+#     G_k = np.eye(N+1,N+1,dtype=np.float64)
+#     G_k[k:k+2,k:k+2] = compute_reverse_givens(x_bar[k:k+2])
+#     
+#     x_bar = G_k @ x_bar
+#     G = G_k @ G
+
+# 
+# def inverse_exponential(q,p):
+#     '''
+#     Let <q> and <p> be two unit vectors.
+#     Where:
+#         <q> should be aligned to the x_N axis
+#         <p> is another vector that we want to map to the tangential hyperplane
+#     
+#     The inverse exponential map takes a point <p> and finds the angular rotation component
+#     between <q> and the x_i component of <p>. This returns the x_i' component of l(p) in the
+#     tangential hyperplane. 
+#     '''
+#     
+#     #Make output vector (we lose the d+1 component)
+#     l_p = np.zeros( p.shape[0] - 1 )
+#     
+#     #For each angular component on the sphere, find the corresponding euclidean component  
+#     for i in np.arange(0,l_p.shape[0]):
+#         
+#         #Compute the cosine angle in radians
+#         r = np.arccos(np.dot(q,p))
+#         
+#         #Project into the tangent hyperplane to get the x_i' component
+#         l_p[i] = p[i] * r/np.sin(r)
+#     
+#     return l_p
+# 
+# def exponential_map(q,p):
+#     '''
+#     Let <q> and <p> be two vectors lying in a hyperplane. 
+#     Where:
+#         <q> is a vector in euclidean space lying on an n-sphere
+#         <p> is some vector lying on a hyperplane that is tangential to the n-sphere at <q>
+#     
+#     The exponential map takes a point <p> on the hyperplane and computes a point on the n-sphere
+#     that preserves euclidean distances in the form of angular distances between <q> and <p>. 
+#     '''
+#     
+#     #Make output vector (has n dimensions)
+#     exp_p = np.zeros(q.shape[0])
+#     
+#     #Compute the total distance of p from q in the tangential hyperplane
+#     r = np.linalg.norm(p)
+#     
+#     #Calculate the multiplier sin(r)/r. 
+#     #This if condition is mentioned in the spherical means paper pg. 11 at the bottom
+#     if np.greater(r,0):
+#         m = np.sin(r)/r
+#     else:
+#         m = 1
+#     
+#     for i in np.arange(0,p.shape[0]):
+#         exp_p[i] = p[i] * m
+#         
+#     #Compute the last component
+#     exp_p[-1] = np.cos(r)
+#     
+#     return exp_p
+    
+    
+    
+############ translation of Jerry's code ############### #    
+compute_reverse_givens <- function(a) {  #a is 2d vector
+    
+  # Define <a> to be a vector in 2 dimensional space. 
+  # Find the rotation matrix that aligns a to the axis z = [0,r] 
+  # Where r is the magnitude of <a>
+  # 
+  # This method is a slight variation (x_j = x_N instead of x_j = x_1) of
+  # N-dimensional Rotation Matrix Generation Algorithm
+  # (Zhelezov, O.I 2017)
+    
+  hyp <- sqrt(((a[1]^2) + (a[2]^2)))  # magnitude sqrt(sum(x^2)) or hypot from pracma package
+  if (hyp^2 > 0) { #greater than ignore floating pt error
+    s_k <- a[1]/hyp
+    c_k <- a[2]/hyp
+  } else {
+     s_k <- 1
+     c_k <- 0
+  }
+  return(matrix(c(c_k, s_k, -s_k, c_k), nrow=2))
+}	
+  
+  
+  
+#Reverse algorithm
+
+rotate_coords <- function(q) { #takes q (shitty estimate of centroid) and aligns to last axis and outputs transform
+  N <- length(q)
+  G <- diag(N) #identity matrix
+  x_bar <- q
+    for (k in 1:(N-1)){
+    
+      G_k <- diag(N)
+      G_k[k:(k+1),k:(k+1)] <- compute_reverse_givens(x_bar[k:(k+1)])
+    
+      x_bar <- G_k %*% x_bar
+      G <- G_k %*% G
+      #print(k)
+    }
+  return(G)
+}
+
+inverse_exponential <- function(q,p) {
+  # 
+  # Let <q> and <p> be two unit vectors.
+  # Where:
+  #     <q> should be aligned to the x_N axis
+  #     <p> is another vector that we want to map to the tangential hyperplane
+  # 
+  # The inverse exponential map takes a point <p> and finds the angular rotation component
+  # between <q> and the x_i component of <p>. This returns the x_i' component of l(p) in the
+  # tangential hyperplane. 
+  # 
+  
+  #Make output vector (we lose the d+1 component)
+  
+  l_p <- matrix(0, nrow = 1, ncol = (length(q)-1)) #array of Zeros 1 less than dim p
+  
+  #For each angular component on the sphere, find the corresponding euclidean component  
+  for (i in (1:(length(q)-1))) {
+    
+    #Compute the cosine angle in radians
+    r <- acos((t(q)%*%t(t(p)))) #
+    
+    #Project into the tangent hyperplane to get the x_i' component
+    l_p[i] <- p[i] * (r/sin(r))
+  }  
+  return(l_p)
+}
+
+exponential_map <- function(q,p) {
+
+  # Let <q> and <p> be two vectors lying in a hyperplane. 
+  # Where:
+  #     <q> is a vector in euclidean space lying on an n-sphere
+  #     <p> is some vector lying on a hyperplane that is tangential to the n-sphere at <q>
+  # 
+  # The exponential map takes a point <p> on the hyperplane and computes a point on the n-sphere
+  # that preserves euclidean distances in the form of angular distances between <q> and <p>. 
+
+  #Make output vector (has n dimensions)
+  exp_p <- array(rep(0, length(q)))
+  
+  #Compute the total distance of p from q in the tangential hyperplane
+  r <- sqrt(sum(p^2))
+  
+  #Calculate the multiplier sin(r)/r. 
+  #This if condition is mentioned in the spherical means paper pg. 11 at the bottom
+  if (r>0) {
+      m <- sin(r)/r
+  } else {
+    m <- 1
+  }
+  for (i in 1:(length(q))) {
+    exp_p[i] <- p[i] * m
+  }
+  #Compute the last component
+  exp_p[(length(q))] <- cos(r)
+  
+  return(exp_p)
+}
+
+
+cent <- function(x, max.iter) {
+  
+  #def shitty mean as initial centroid
+  q <- colMeans(x) %>% unit1() 
+  
+  for (m in 1:max.iter) {
+  
+    #get transform of q to hyperplane origin (0,0....1)
+    Gxform <- rotate_coords(q)
+    
+    #apply rotation to all data points
+    qrot <- Gxform %*% q
+    xrot <- Gxform %*% t(x) 
+    
+    p_est <- matrix(NA, nrow = ncol(xrot), ncol = (length(qrot)-1))
+    for (i in 1:ncol(xrot)) { 
+      #calculate angular distance for each point to q on hyperplane
+      p_est[i,] <- inverse_exponential(qrot,xrot[,i]) 
+    }
+  
+    u <- (colSums(p_est - qrot[1:(length(qrot)-1)])) / (ncol(xrot))
+    qrot_updated <- qrot[1:(length(qrot)-1)] + u
+    qrot_new <- exponential_map(qrot, qrot_updated)
+    Gxform_inv <- ginv(Gxform)
+    q <- Gxform_inv %*% qrot_new
+  
+    if (sqrt(sum(u^2)) <0.00001) {   # If ||u|| is sufficiently small, output q and halt, otherwise continue looping.
+      break
+    }
+  }
+  return(q)
+}
+
+  
+```
+#calculate cosine similarity (angle between sub and mu)
+```{r}
+#divide by sex
+HCP.M <- subset(HCP.norm, Sex =="Male")
+HCP.F <- subset(HCP.norm, Sex =="Female")
+
+PNC.M <- subset(PNC.norm, Sex=="M")
+PNC.F <- subset(PNC.norm, Sex=="F")
+
+OASIS.M <- subset(OASIS.norm, Sex =="M")
+OASIS.F <- subset(OASIS.norm, Sex =="F")
+
+# HCP.M$Total.cos <- filter(HCP.unit, sex.coded ==1) %>% select(1:(length(.)-4)) %>% cos.dist()
+HCP.M$Global.cos <- filter(HCP.unit.global, sex.coded ==1) %>%
+  select(HCP.glo) %>% cos.dist()
+
+HCP.M$SC.cos <- filter(HCP.unit.SC, sex.coded ==1) %>%
+  select(HCP.SC) %>%
+  cos.dist()
+
+HCP.M$SA.cos <- filter(HCP.unit.SA, sex.coded ==1) %>%
+  select(starts_with("SA")) %>%
+  cos.dist()
+HCP.M$CT.cos <- filter(HCP.unit.CT, sex.coded ==1) %>%
+  select(starts_with("CT")) %>%
+  cos.dist()
+
+# HCP.F$Total.cos <- filter(HCP.unit, sex.coded ==2) %>% select(1:(length(.)-4)) %>% cos.dist()
+HCP.F$Global.cos <- filter(HCP.unit.global, sex.coded ==2) %>%
+  select(HCP.glo) %>%
+  cos.dist()
+
+HCP.F$SC.cos <- filter(HCP.unit.SC, sex.coded ==2) %>%
+  select(HCP.SC) %>%
+  cos.dist()
+
+HCP.F$SA.cos <- filter(HCP.unit.SA, sex.coded ==2) %>%
+  select(starts_with("SA")) %>%
+  cos.dist()
+HCP.F$CT.cos <- filter(HCP.unit.CT, sex.coded ==2) %>%
+  select(starts_with("CT")) %>%
+  cos.dist()
+
+HCP.cos <- rbind(HCP.M, HCP.F)
+
+##PNC
+# PNC.M$Total.cos <- filter(PNC.unit, sex.coded ==1) %>% select(1:(length(.)-4)) %>% cos.dist()
+PNC.M$Global.cos <- filter(PNC.unit.global, sex.coded ==1) %>%
+  select(PNC.glo) %>%
+  cos.dist()
+
+PNC.M$SC.cos <- filter(PNC.unit.SC, sex.coded ==1) %>%
+  select(PNC.SC) %>%
+  cos.dist()
+
+PNC.M$SA.cos <- filter(PNC.unit.SA, sex.coded ==1) %>% select(starts_with("SA")) %>% cos.dist()
+PNC.M$CT.cos <- filter(PNC.unit.CT, sex.coded ==1) %>% select(starts_with("CT")) %>% cos.dist()
+
+# PNC.F$Total.cos <- filter(PNC.unit, sex.coded ==2) %>% select(1:(length(.)-4)) %>% cos.dist()
+PNC.F$Global.cos <- filter(PNC.unit.global, sex.coded ==2) %>%
+  select(PNC.glo) %>%
+  cos.dist()
+
+PNC.F$SC.cos <- filter(PNC.unit.SC, sex.coded ==2) %>%
+  select(PNC.SC) %>%
+  cos.dist()
+
+PNC.F$SA.cos <- filter(PNC.unit.SA, sex.coded ==2) %>% select(starts_with("SA")) %>% cos.dist()
+PNC.F$CT.cos <- filter(PNC.unit.CT, sex.coded ==2) %>% select(starts_with("CT")) %>% cos.dist()
+
+PNC.cos <- rbind(PNC.M, PNC.F)
+
+
+#OASIS
+# OASIS.M$Total.cos <- filter(OASIS.unit, sex.coded ==1) %>% select(1:(length(.)-4)) %>% cos.dist()
+OASIS.M$Global.cos <- filter(OASIS.unit.global, sex.coded ==1) %>%
+  select(OASIS.glo) %>%
+  cos.dist()
+
+OASIS.M$SC.cos <-filter(OASIS.unit.SC, sex.coded ==1) %>%
+  select(OASIS.SC) %>%
+  cos.dist()
+
+OASIS.M$SA.cos <- filter(OASIS.unit.SA, sex.coded ==1) %>% select(starts_with("SA")) %>% cos.dist()
+OASIS.M$CT.cos <- filter(OASIS.unit.CT, sex.coded ==1) %>% select(starts_with("CT")) %>% cos.dist()
+
+
+# OASIS.F$Total.cos <- filter(OASIS.unit, sex.coded ==2) %>% select(1:(length(.)-4)) %>% cos.dist()
+OASIS.F$Global.cos <- filter(OASIS.unit.global, sex.coded ==2) %>%
+  select(OASIS.glo) %>%
+  cos.dist()
+
+OASIS.F$SC.cos <-filter(OASIS.unit.SC, sex.coded ==2) %>%
+  select(OASIS.SC) %>%
+  cos.dist()
+
+OASIS.F$SA.cos <- filter(OASIS.unit.SA, sex.coded ==2) %>% select(starts_with("SA")) %>% cos.dist()
+OASIS.F$CT.cos <- filter(OASIS.unit.CT, sex.coded ==2) %>% select(starts_with("CT")) %>% cos.dist()
+
+OASIS.cos <- rbind(OASIS.M, OASIS.F)
+
+#get stats from each dataset
+# df.ls <- c("PNC.cos", "HCP.cos", "OASIS.cos", "ADNI.cos")
+df.ls.cos <- c("PNC.cos", "HCP.cos", "OASIS.cos")
+# Total.cos  <- lapply(df.ls.cos, function(i){
+#   t.test(Total.cos ~ Sex , data=get(i))
+# })
+# num=length(Total.cos)
+# Totalstats.cos <- extractT(Total.cos, num)
+
+Global.cos  <- lapply(df.ls.cos, function(i){
+  t.test(Global.cos ~ Sex , data=get(i))
+})
+num=length(Global.cos)
+Globalstats.cos <- extractT(Global.cos, num)
+
+SC.cos  <- lapply(df.ls.cos, function(i){
+  t.test(SC.cos ~ Sex , data=get(i))
+})
+SCstats.cos <- extractT(SC.cos, num)
+
+SA.cos  <- lapply(df.ls.cos, function(i){
+  t.test(SA.cos ~ Sex , data=get(i))
+})
+SAstats.cos <- extractT(SA.cos, num)
+
+CT.cos  <- lapply(df.ls.cos, function(i){
+  t.test(CT.cos ~ Sex , data=get(i))
+})
+CTstats.cos <- extractT(CT.cos, num)
+
+# names(Totalstats.cos) <- paste0('Tot_',names(Totalstats.cos))
+names(Globalstats.cos) <- paste0('Glo_',names(Globalstats.cos))
+names(SCstats.cos) <- paste0('SC_',names(SCstats.cos))
+names(SAstats.cos) <- paste0('SA_',names(SAstats.cos))
+names(CTstats.cos) <- paste0('CT_',names(CTstats.cos))
+
+stats.cos <- cbind(Globalstats.cos, SCstats.cos, SAstats.cos, CTstats.cos)
+
+stats.cos <- apply(stats.cos,2,as.character)
+rownames(stats.cos) <- df.ls.cos
+cos.out.file <- paste(outdir, "cos_stats.csv", sep="/")
+# write.csv(stats.cos, file=cos.out.file, row.names = T)
+print(stats.cos)
+
+
+```
+
+
+#Plotting Cosine distance
+```{r}
+
+HCP.plt.gl <- ggplot(HCP.cos, aes(x="Sex", fill= Sex, y=Global.cos)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle (deg)") + ylim(0,180) +
+                      stat_summary(aes(y=Global.cos), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+PNC.plt.gl <- ggplot(PNC.cos, aes(x="Sex", fill= Sex, y=Global.cos)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle (deg)") + ylim(0,180) +
+                      stat_summary(aes(y=Global.cos), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+OASIS.plt.gl <- ggplot(OASIS.cos, aes(x="Sex", fill= Sex, y=Global.cos)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle (deg)") + ylim(0,180) +
+                      stat_summary(aes(y=Global.cos), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+#SC
+HCP.plt.sc <- ggplot(HCP.cos, aes(x="Sex", fill= Sex, y=SC.cos)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle (deg)") + ylim(0,180) +
+                      stat_summary(aes(y=SC.cos), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+PNC.plt.sc <- ggplot(PNC.cos, aes(x="Sex", fill= Sex, y=SC.cos)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle (deg)") + ylim(0,180) +
+                      stat_summary(aes(y=SC.cos), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+OASIS.plt.sc <- ggplot(OASIS.cos, aes(x="Sex", fill= Sex, y=SC.cos)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle (deg)") + ylim(0,180) +
+                      stat_summary(aes(y=SC.cos), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+#SA
+HCP.plt.sa <- ggplot(HCP.cos, aes(x="Sex", fill= Sex, y=SA.cos)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle (deg)") + ylim(0,180) +
+                      stat_summary(aes(y=SA.cos), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+PNC.plt.sa <- ggplot(PNC.cos, aes(x="Sex", fill= Sex, y=SA.cos)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle (deg)") + ylim(0,180) +
+                      stat_summary(aes(y=SA.cos), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+OASIS.plt.sa <- ggplot(OASIS.cos, aes(x="Sex", fill= Sex, y=SA.cos)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle (deg)") + ylim(0,180) +
+                      stat_summary(aes(y=SA.cos), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+#CT
+HCP.plt.ct <- ggplot(HCP.cos, aes(x="Sex", fill= Sex, y=CT.cos)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle (deg)") + ylim(0,180) +
+                      stat_summary(aes(y=CT.cos), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+PNC.plt.ct <- ggplot(PNC.cos, aes(x="Sex", fill= Sex, y=CT.cos)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle (deg)") + ylim(0,180) +
+                      stat_summary(aes(y=CT.cos), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+OASIS.plt.ct <- ggplot(OASIS.cos, aes(x="Sex", fill= Sex, y=CT.cos)) + geom_split_violin() +
+              theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
+                      axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
+                      ylab("Cosine Angle (deg)") + ylim(0,180) +
+                      stat_summary(aes(y=CT.cos), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+                            size=0.5, position = position_dodge(width = .75))
+
+plot_grid(PNC.plt.gl, HCP.plt.gl, OASIS.plt.gl, PNC.plt.sc, HCP.plt.sc, OASIS.plt.sc, PNC.plt.sa, HCP.plt.sa, OASIS.plt.sa, 
+          PNC.plt.ct, HCP.plt.ct, OASIS.plt.ct, align="hv", ncol = 3)
+
+cos.plt <- plot_grid(PNC.plt.gl, HCP.plt.gl, OASIS.plt.gl, PNC.plt.sc, HCP.plt.sc, OASIS.plt.sc, PNC.plt.sa, HCP.plt.sa, OASIS.plt.sa, 
+          PNC.plt.ct, HCP.plt.ct, OASIS.plt.ct, align="hv", ncol = 3)
+
+cos.plt.file <- paste(outdir, "Comb_Cosdist.png", sep="/")
+# ggsave(cos.plt.file, cos.plt, dpi=300, width = 21, height = 20, units = "cm") #####
+
+```

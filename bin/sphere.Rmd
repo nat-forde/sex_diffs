@@ -722,8 +722,8 @@ HCP.F <- subset(HCP.norm, Sex =="Female")
 PNC.M <- subset(PNC.norm, Sex=="M")
 PNC.F <- subset(PNC.norm, Sex=="F")
 
-OASIS.M <- subset(OASIS.norm, Sex =="M")
-OASIS.F <- subset(OASIS.norm, Sex =="F")
+OASIS.M <- filter(OASIS.norm, Sex =="M", Age >= 55, Age <=80)
+OASIS.F <- filter(OASIS.norm, Sex =="F", Age >= 55, Age <=80)
 
 # HCP.M$Total.cos <- filter(HCP.unit, sex.coded ==1) %>% select(1:(length(.)-4)) %>% cos.dist()
 HCP.M$Global.cos <- filter(HCP.unit.global, sex.coded ==1) %>%
@@ -788,29 +788,29 @@ PNC.cos <- rbind(PNC.M, PNC.F)
 
 #OASIS
 # OASIS.M$Total.cos <- filter(OASIS.unit, sex.coded ==1) %>% select(1:(length(.)-4)) %>% cos.dist()
-OASIS.M$Global.cos <- filter(OASIS.unit.global, sex.coded ==1) %>%
+OASIS.M$Global.cos <- filter(OASIS.unit.global, sex.coded ==1, Age >= 55, Age <=80) %>%
   select(OASIS.glo) %>%
   cos.dist()
 
-OASIS.M$SC.cos <-filter(OASIS.unit.SC, sex.coded ==1) %>%
+OASIS.M$SC.cos <-filter(OASIS.unit.SC, sex.coded ==1, Age >= 55, Age <=80) %>%
   select(OASIS.SC) %>%
   cos.dist()
 
-OASIS.M$SA.cos <- filter(OASIS.unit.SA, sex.coded ==1) %>% select(starts_with("SA")) %>% cos.dist()
-OASIS.M$CT.cos <- filter(OASIS.unit.CT, sex.coded ==1) %>% select(starts_with("CT")) %>% cos.dist()
+OASIS.M$SA.cos <- filter(OASIS.unit.SA, sex.coded ==1, Age >= 55, Age <=80) %>% select(starts_with("SA")) %>% cos.dist()
+OASIS.M$CT.cos <- filter(OASIS.unit.CT, sex.coded ==1, Age >= 55, Age <=80) %>% select(starts_with("CT")) %>% cos.dist()
 
 
 # OASIS.F$Total.cos <- filter(OASIS.unit, sex.coded ==2) %>% select(1:(length(.)-4)) %>% cos.dist()
-OASIS.F$Global.cos <- filter(OASIS.unit.global, sex.coded ==2) %>%
+OASIS.F$Global.cos <- filter(OASIS.unit.global, sex.coded ==2, Age >= 55, Age <=80) %>%
   select(OASIS.glo) %>%
   cos.dist()
 
-OASIS.F$SC.cos <-filter(OASIS.unit.SC, sex.coded ==2) %>%
+OASIS.F$SC.cos <-filter(OASIS.unit.SC, sex.coded ==2, Age >= 55, Age <=80) %>%
   select(OASIS.SC) %>%
   cos.dist()
 
-OASIS.F$SA.cos <- filter(OASIS.unit.SA, sex.coded ==2) %>% select(starts_with("SA")) %>% cos.dist()
-OASIS.F$CT.cos <- filter(OASIS.unit.CT, sex.coded ==2) %>% select(starts_with("CT")) %>% cos.dist()
+OASIS.F$SA.cos <- filter(OASIS.unit.SA, sex.coded ==2, Age >= 55, Age <=80) %>% select(starts_with("SA")) %>% cos.dist()
+OASIS.F$CT.cos <- filter(OASIS.unit.CT, sex.coded ==2, Age >= 55, Age <=80) %>% select(starts_with("CT")) %>% cos.dist()
 
 OASIS.cos <- rbind(OASIS.M, OASIS.F)
 

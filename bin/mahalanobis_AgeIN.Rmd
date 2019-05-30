@@ -480,7 +480,7 @@ HCP.mat <- matchit(treat ~ Age, data=HCP.norm)
 HCP.norm.mat <- match.data(HCP.mat)
 
 OASIS.norm$treat <- ifelse(OASIS.norm$Sex == "M", 1, 0)
-OASIS.mat <- matchit(treat ~ Age, data=OASIS.norm)
+OASIS.mat <- OASIS.norm %>% filter(Age >=55, Age <= 80) %>% matchit(treat ~ Age, data = .)
 OASIS.norm.mat <- match.data(OASIS.mat)
 
 ########### UN MATCHED #####################

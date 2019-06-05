@@ -1045,10 +1045,12 @@ CT.cos <- rbind(CT.cosu10m, CT.cos1015m, CT.cos1520m, CT.cosu10f, CT.cos1015f, C
 
 ```{r stats of bins}
 
+############# with age bins
+
 df.ls.cos.glo <- c("PNC.Global.cos", "HCP.Global.cos", "OASIS.Global.cos")
 df.ls.cos.SC <- c("PNC.SC.cos", "HCP.SC.cos", "OASIS.SC.cos")
-df.ls.cos.glo <- c("PNC.SA.cos", "HCP.SA.cos", "OASIS.SA.cos")
-df.ls.cos.glo <- c("PNC.CT.cos", "HCP.CT.cos", "OASIS.CT.cos")
+df.ls.cos.SA <- c("PNC.SA.cos", "HCP.SA.cos", "OASIS.SA.cos")
+df.ls.cos.CT <- c("PNC.CT.cos", "HCP.CT.cos", "OASIS.CT.cos")
 
 
 Global.cos.bin  <- lapply(df.ls.cos.glo, function(i){
@@ -1063,10 +1065,10 @@ SC.cos.bin  <- lapply(df.ls.cos.SC, function(i){
 })
 SCstats.cos.bin <- extract(SC.cos.bin, num)
 
-SA.cos.bin  <- lapply(df.ls.cos.SC, function(i){
+SA.cos.bin  <- lapply(df.ls.cos.SA, function(i){
   lm(as.numeric(V1) ~ V2*V3, data=get(i))
 })
-SAstats.cos.bin <- extract(SA.cos.SA, num)
+SAstats.cos.bin <- extract(SA.cos.bin, num)
 
 CT.cos.bin  <- lapply(df.ls.cos.CT, function(i){
   lm(as.numeric(V1) ~ V2*V3, data=get(i))
@@ -1081,27 +1083,14 @@ names(CTstats.cos.bin) <- paste0('CT_',names(CTstats.cos.bin))
 stats.cos.bin <- cbind(Globalstats.cos.bin, SCstats.cos.bin, SAstats.cos.bin, CTstats.cos.bin)
 
 stats.cos.bin <- apply(stats.cos.bin ,2,as.character)
-rownames(stats.cos.bin) <- df.ls.cos.glo
+rownames(stats.cos.bin) <- c("PNC", "HCP", "OASIS")
 cos.bin.file <- paste(outdir, "cos_statsAgeIN_binned.csv", sep="/")
 write.csv(stats.cos.bin, file=cos.bin.file, row.names = T)
 print(stats.cos.bin)
 
+```
 
-
-
-############# with age bins
-Anova(lm(as.numeric(V1) ~ V2*V3, data=PNC.Global.cos))
-Anova(lm(as.numeric(V1) ~ V2*V3, data=PNC.SC.cos))
-Anova(lm(as.numeric(V1) ~ V2*V3, data=PNC.SA.cos))
-Anova(lm(as.numeric(V1) ~ V2*V3, data=PNC.CT.cos))
-Anova(lm(as.numeric(V1) ~ V2*V3, data=HCP.Global.cos))
-Anova(lm(as.numeric(V1) ~ V2*V3, data=HCP.SC.cos))
-Anova(lm(as.numeric(V1) ~ V2*V3, data=HCP.SA.cos))
-Anova(lm(as.numeric(V1) ~ V2*V3, data=HCP.CT.cos))
-Anova(lm(as.numeric(V1) ~ V2*V3, data=OASIS.Global.cos))
-Anova(lm(as.numeric(V1) ~ V2*V3, data=OASIS.SC.cos))
-Anova(lm(as.numeric(V1) ~ V2*V3, data=OASIS.SA.cos))
-Anova(lm(as.numeric(V1) ~ V2*V3, data=OASIS.CT.cos))
+```{r plot-bins}
 
 PNC.glo.fig <- ggplot(PNC.Global.cos, aes(x=V3, colour= V2, y=as.numeric(V1))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
               theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +

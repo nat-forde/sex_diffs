@@ -21,7 +21,7 @@ library(mgcv)
 ## set all the paths
 #PNC
 
-old_pheno <- read.csv("/external/PNC/data/clinical_data/phs000607.v1.pht003445.v1.p1.c1.Neurodevelopmental_Genomics_Subject_Phenotypes.GRU-NPU.txt",, sep='\t', comment.char="#", header=TRUE)
+old_pheno <- read.csv("/projects/nforde/PNC/phs000607.v1.pht003445.v1.p1.c1.Neurodevelopmental_Genomics_Subject_Phenotypes.GRU-NPU.txt",, sep='\t', comment.char="#", header=TRUE)
 
 new_pheno = read.delim('/projects/gjacobs/PNC/pnc_phenotypes_v02.txt', sep='\t', comment.char="#")
 

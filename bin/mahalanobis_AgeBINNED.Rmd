@@ -1,0 +1,792 @@
+---
+title: "Mahalanobis age binned"
+author: "nforde"
+date: "July 23, 2019"
+output: html_document
+---
+
+## get libraries/set paths
+```{r get libraries & set paths}
+library(tidyverse)
+library(broom)
+library(knitr)
+library(car)
+library(cowplot)
+library(lme4)
+library(ggseg)
+library(gridExtra)
+library(reshape2)
+library(ggbiplot)
+library(MASS)
+library(mosaic)
+library(MatchIt)
+
+
+## set all the paths
+#HCP
+HCP.res <- read.csv("/projects/nforde/HCP/stats/HCP/AllresAgeIN.csv") 
+PNC.res <- read.csv("/projects/nforde/HCP/stats/PNC/AllresAgeIN.csv")
+OASIS.res <- read.csv("/projects/nforde/HCP/stats/OASIS/AllresAgeIN.csv")
+
+HCP.norm <- HCP.res[c(2:length(HCP.res))]
+PNC.norm <- PNC.res[c(2:length(PNC.res))]
+OASIS.norm <- OASIS.res[c(2:length(OASIS.res))]
+
+names(HCP.norm)[names(HCP.norm) == 'Age_in_Yrs'] <- 'Age'
+names(PNC.norm)[names(PNC.norm) == 'age_at_cnb'] <- 'Age'
+
+outdir <- "/projects/nforde/HCP/stats/combined_figures/"
+
+```
+
+## define functions
+```{r define functions}
+
+unit1 <- function(x) {x / sqrt(sum(x^2))} #where x is the vector to normalise
+
+euc.dist <- function(x) {
+  y <- colMeans(x)
+  euc <- apply(x, 1, function(i) sqrt(sum((i - y) ^ 2)))
+  return(euc)
+}
+
+mah.dist <- function(x,cov){
+  mahsq <- mahalanobis(x, colMeans(x), cov, tol=1e-20)
+  mah <- sqrt(mahsq)
+  return(mah)
+}
+
+cos.dist <- function(x){
+  y <- cent(x, 200)
+  sim <- as.matrix(x) %*% y 
+  deg <- acos(sim) * 180/pi
+  return(deg) 
+}
+
+get_colors <- function(groups, group.col = palette()){
+  groups <- as.factor(groups)
+  ngrps <- length(levels(groups))
+  if(ngrps > length(group.col)) 
+    group.col <- rep(group.col, ngrps)
+  color <- group.col[as.numeric(groups)]
+  names(color) <- as.vector(groups)
+  return(color)
+}
+
+extract <- function(i, num){
+  F_age <- lapply((i), function(f) Anova(f)$"F value"[2])
+  F_sex <- lapply((i), function(f) Anova(f)$"F value"[1])
+  F_ageXsex <-lapply((i), function(f) Anova(f)$"F value"[3])
+  p_age <-lapply((i), function(f) Anova(f)$"Pr(>F)"[2])
+  p_sex <-lapply((i), function(f) Anova(f)$"Pr(>F)"[1])
+  p_ageXsex <-lapply((i), function(f) Anova(f)$"Pr(>F)"[3])
+  adjRsq <- sapply((i), function(f) summary(f)$adj.r.squared)
+  padj_age <- p.adjust(p_age, method="fdr", n=num)
+  padj_sex <- p.adjust(p_sex, method="fdr", n=num)
+  padj_ageXsex <- p.adjust(p_ageXsex, method="fdr", n=num)
+  
+  merged <- as.data.frame(cbind(F_age, padj_age, F_sex, padj_sex, F_ageXsex, p_ageXsex, adjRsq))
+  return(merged)
+}
+
+
+GeomSplitViolin <- ggproto("GeomSplitViolin", GeomViolin, draw_group = function(self, data, ..., draw_quantiles = NULL){
+  data <- transform(data, xminv = x - violinwidth * (x - xmin), xmaxv = x + violinwidth * (xmax - x))
+  grp <- data[1,'group']
+  newdata <- plyr::arrange(transform(data, x = if(grp%%2==1) xminv else xmaxv), if(grp%%2==1) y else -y)
+  newdata <- rbind(newdata[1, ], newdata, newdata[nrow(newdata), ], newdata[1, ])
+  newdata[c(1,nrow(newdata)-1,nrow(newdata)), 'x'] <- round(newdata[1, 'x']) 
+  if (length(draw_quantiles) > 0 & !scales::zero_range(range(data$y))) {
+    stopifnot(all(draw_quantiles >= 0), all(draw_quantiles <= 
+                                              1))
+    quantiles <- ggplot2:::create_quantile_segment_frame(data, draw_quantiles)
+    aesthetics <- data[rep(1, nrow(quantiles)), setdiff(names(data), c("x", "y")), drop = FALSE]
+    aesthetics$alpha <- rep(1, nrow(quantiles))
+    both <- cbind(quantiles, aesthetics)
+    quantile_grob <- GeomPath$draw_panel(both, ...)
+    ggplot2:::ggname("geom_split_violin", grid::grobTree(GeomPolygon$draw_panel(newdata, ...), quantile_grob))
+  }
+  else {
+    ggplot2:::ggname("geom_split_violin", GeomPolygon$draw_panel(newdata, ...))
+  }
+})
+
+geom_split_violin <- function (mapping = NULL, data = NULL, stat = "ydensity", position = "identity", ..., draw_quantiles = NULL, trim = TRUE, scale = "area", na.rm = FALSE, show.legend = NA, inherit.aes = TRUE) {
+  layer(data = data, mapping = mapping, stat = stat, geom = GeomSplitViolin, position = position, show.legend = show.legend, inherit.aes = inherit.aes, params = list(trim = trim, scale = scale, draw_quantiles = draw_quantiles, na.rm = na.rm, ...))
+}
+
+######### All the functions required for calculating the centroid 
+############ translation of Jerry's code ############### #    
+compute_reverse_givens <- function(a) {  #a is 2d vector
+    
+  # Define <a> to be a vector in 2 dimensional space. 
+  # Find the rotation matrix that aligns a to the axis z = [0,r] 
+  # Where r is the magnitude of <a>
+  # 
+  # This method is a slight variation (x_j = x_N instead of x_j = x_1) of
+  # N-dimensional Rotation Matrix Generation Algorithm
+  # (Zhelezov, O.I 2017)
+    
+  hyp <- sqrt(((a[1]^2) + (a[2]^2)))  # magnitude sqrt(sum(x^2)) or hypot from pracma package
+  if (hyp^2 > 0) { #greater than ignore floating pt error
+    s_k <- a[1]/hyp
+    c_k <- a[2]/hyp
+  } else {
+     s_k <- 1
+     c_k <- 0
+  }
+  return(matrix(c(c_k, s_k, -s_k, c_k), nrow=2))
+}	
+  
+  
+  
+#Reverse algorithm
+
+rotate_coords <- function(q) { #takes q (shitty estimate of centroid) and aligns to last axis and outputs transform
+  N <- length(q)
+  G <- diag(N) #identity matrix
+  x_bar <- q
+    for (k in 1:(N-1)){
+    
+      G_k <- diag(N)
+      G_k[k:(k+1),k:(k+1)] <- compute_reverse_givens(x_bar[k:(k+1)])
+    
+      x_bar <- G_k %*% x_bar
+      G <- G_k %*% G
+      #print(k)
+    }
+  return(G)
+}
+
+inverse_exponential <- function(q,p) {
+  # 
+  # Let <q> and <p> be two unit vectors.
+  # Where:
+  #     <q> should be aligned to the x_N axis
+  #     <p> is another vector that we want to map to the tangential hyperplane
+  # 
+  # The inverse exponential map takes a point <p> and finds the angular rotation component
+  # between <q> and the x_i component of <p>. This returns the x_i' component of l(p) in the
+  # tangential hyperplane. 
+  # 
+  
+  #Make output vector (we lose the d+1 component)
+  
+  l_p <- matrix(0, nrow = 1, ncol = (length(q)-1)) #array of Zeros 1 less than dim p
+  
+  #For each angular component on the sphere, find the corresponding euclidean component  
+  for (i in (1:(length(q)-1))) {
+    
+    #Compute the cosine angle in radians
+    r <- acos((t(q)%*%t(t(p)))) #
+    
+    #Project into the tangent hyperplane to get the x_i' component
+    l_p[i] <- p[i] * (r/sin(r))
+  }  
+  return(l_p)
+}
+
+exponential_map <- function(q,p) {
+
+  # Let <q> and <p> be two vectors lying in a hyperplane. 
+  # Where:
+  #     <q> is a vector in euclidean space lying on an n-sphere
+  #     <p> is some vector lying on a hyperplane that is tangential to the n-sphere at <q>
+  # 
+  # The exponential map takes a point <p> on the hyperplane and computes a point on the n-sphere
+  # that preserves euclidean distances in the form of angular distances between <q> and <p>. 
+
+  #Make output vector (has n dimensions)
+  exp_p <- array(rep(0, length(q)))
+  
+  #Compute the total distance of p from q in the tangential hyperplane
+  r <- sqrt(sum(p^2))
+  
+  #Calculate the multiplier sin(r)/r. 
+  #This if condition is mentioned in the spherical means paper pg. 11 at the bottom
+  if (r>0) {
+      m <- sin(r)/r
+  } else {
+    m <- 1
+  }
+  for (i in 1:(length(q))) {
+    exp_p[i] <- p[i] * m
+  }
+  #Compute the last component
+  exp_p[(length(q))] <- cos(r)
+  
+  return(exp_p)
+}
+
+
+cent <- function(x, max.iter) {
+  
+  #def shitty mean as initial centroid
+  q <- colMeans(x) %>% unit1() 
+  
+  for (m in 1:max.iter) {
+  
+    #get transform of q to hyperplane origin (0,0....1)
+    Gxform <- rotate_coords(q)
+    
+    #apply rotation to all data points
+    qrot <- Gxform %*% q
+    xrot <- Gxform %*% t(x) 
+    
+    p_est <- matrix(NA, nrow = ncol(xrot), ncol = (length(qrot)-1))
+    for (i in 1:ncol(xrot)) { 
+      #calculate angular distance for each point to q on hyperplane
+      p_est[i,] <- inverse_exponential(qrot,xrot[,i]) 
+    }
+  
+    u <- (colSums(p_est - qrot[1:(length(qrot)-1)])) / (ncol(xrot))
+    qrot_updated <- qrot[1:(length(qrot)-1)] + u
+    qrot_new <- exponential_map(qrot, qrot_updated)
+    Gxform_inv <- ginv(Gxform)
+    q <- Gxform_inv %*% qrot_new
+  
+    if (sqrt(sum(u^2)) <0.00001) {   # If ||u|| is sufficiently small, output q and halt, otherwise continue looping.
+      break
+    }
+  }
+  return(q)
+}
+
+```
+
+
+```{r Mahalanobis Distance}
+#some list of variable names to keep things easier later
+HCP.SC <- c("L_ThalamusProperageIn.resid", "L_CaudateageIn.resid", "L_PutamenageIn.resid", "L_PallidumageIn.resid",
+            "L_HippoageIn.resid", "L_AmygdalaageIn.resid", "L_AccumbensAreaageIn.resid", "R_ThalamusProperageIn.resid",
+            "R_CaudateageIn.resid", "R_PutamenageIn.resid", "R_PallidumageIn.resid", "R_HippoageIn.resid",
+            "R_AmygdalaageIn.resid", "R_AccumbensAreaageIn.resid")
+
+PNC.SC <- c("Left.Thalamus.ProperageIn.resid", "Left.CaudateageIn.resid", "Left.PutamenageIn.resid",
+            "Left.PallidumageIn.resid", "Left.HippocampusageIn.resid", "Left.AmygdalaageIn.resid",
+            "Left.Accumbens.areaageIn.resid", "Right.Thalamus.ProperageIn.resid", "Right.CaudateageIn.resid",
+            "Right.PutamenageIn.resid", "Right.PallidumageIn.resid", "Right.HippocampusageIn.resid",
+            "Right.AmygdalaageIn.resid", "Right.Accumbens.areaageIn.resid")
+
+OASIS.SC <- c("lh_Thalamus.ProperageIn.resid", "lh_CaudateageIn.resid", "lh_PutamenageIn.resid", "lh_PallidumageIn.resid",
+                                "lh_HippocampusageIn.resid", "lh_AmygdalaageIn.resid", "lh_Accumbens.areaageIn.resid",
+                               "rh_Thalamus.ProperageIn.resid", "rh_CaudateageIn.resid", "rh_PutamenageIn.resid",
+           "rh_PallidumageIn.resid", "rh_HippocampusageIn.resid", "rh_AmygdalaageIn.resid", "rh_Accumbens.areaageIn.resid")
+
+HCP.glo <- c("Total_GMageIn.resid", "Tot_WMageIn.resid", "Cerebellum_CortageIn.resid", "Cerebellum_WMageIn.resid")
+PNC.glo <- c("TotalGrayageIn.resid", "CorticalWhiteMatterageIn.resid", "Cerebellum_CortageIn.resid",
+                                   "Cerebellum_WMageIn.resid")
+OASIS.glo <- c("TotalGrayageIn.resid", "CorticalWhiteMatterageIn.resid", "Cerebellum_CortageIn.resid",
+                                   "Cerebellum_WMageIn.resid")
+
+
+#divide by sex
+HCP.M <- subset(HCP.norm, Sex =="Male")
+HCP.F <- subset(HCP.norm, Sex =="Female")
+
+PNC.M <- subset(PNC.norm, Sex=="M")
+PNC.F <- subset(PNC.norm, Sex=="F")
+
+OASIS.M <- subset(OASIS.norm, Sex =="M")
+OASIS.F <- subset(OASIS.norm, Sex =="F")
+
+#calculate covariance matrices on full sample within each age bin
+#PNC
+PNC.glo.covu10 <- filter(PNC.norm, Age <10) %>% dplyr::select(PNC.glo) %>% cov()
+PNC.glo.cov1015 <- filter(PNC.norm, Age >=10, Age < 15) %>% dplyr::select(PNC.glo) %>% cov()
+PNC.glo.cov1520 <- filter(PNC.norm, Age >=15, Age < 20) %>% dplyr::select(PNC.glo) %>% cov()
+PNC.SC.covu10 <- filter(PNC.norm, Age <10) %>% dplyr::select(PNC.SC) %>% cov()
+PNC.SC.cov1015 <- filter(PNC.norm, Age >=10, Age < 15) %>% dplyr::select(PNC.SC) %>% cov()
+PNC.SC.cov1520 <- filter(PNC.norm, Age >=15, Age < 20) %>% dplyr::select(PNC.SC) %>% cov()
+PNC.SA.covu10 <- filter(PNC.norm, Age <10) %>% dplyr::select(starts_with("SA")) %>% cov()
+PNC.SA.cov1015 <- filter(PNC.norm, Age >=10, Age < 15) %>% dplyr::select(starts_with("SA")) %>% cov()
+PNC.SA.cov1520 <- filter(PNC.norm, Age >=15, Age < 20) %>% dplyr::select(starts_with("SA")) %>% cov()
+PNC.CT.covu10 <- filter(PNC.norm, Age <10) %>% dplyr::select(starts_with("CT")) %>% cov()
+PNC.CT.cov1015 <- filter(PNC.norm, Age >=10, Age < 15) %>% dplyr::select(starts_with("CT")) %>% cov()
+PNC.CT.cov1520 <- filter(PNC.norm, Age >=15, Age < 20) %>% dplyr::select(starts_with("CT")) %>% cov()
+
+HCP.glo.covu25 <- filter(HCP.norm, Age <25) %>% dplyr::select(HCP.glo) %>% cov()
+HCP.glo.cov2530 <- filter(HCP.norm, Age >=25, Age < 30) %>% dplyr::select(HCP.glo) %>% cov()
+HCP.glo.cov3035 <- filter(HCP.norm, Age >=30, Age < 35) %>% dplyr::select(HCP.glo) %>% cov()
+HCP.SC.covu25 <- filter(HCP.norm, Age <25) %>% dplyr::select(HCP.SC) %>% cov()
+HCP.SC.cov2530 <- filter(HCP.norm, Age >=25, Age < 30) %>% dplyr::select(HCP.SC) %>% cov()
+HCP.SC.cov3035 <- filter(HCP.norm, Age >=30, Age < 35) %>% dplyr::select(HCP.SC) %>% cov()
+HCP.SA.covu25 <- filter(HCP.norm, Age <25) %>% dplyr::select(starts_with("SA")) %>% cov()
+HCP.SA.cov2530 <- filter(HCP.norm, Age >=25, Age < 30) %>% dplyr::select(starts_with("SA")) %>% cov()
+HCP.SA.cov3035 <- filter(HCP.norm, Age >=30, Age < 35) %>% dplyr::select(starts_with("SA")) %>% cov()
+HCP.CT.covu25 <- filter(HCP.norm, Age <25) %>% dplyr::select(starts_with("CT")) %>% cov()
+HCP.CT.cov2530 <- filter(HCP.norm, Age >=25, Age < 30) %>% dplyr::select(starts_with("CT")) %>% cov()
+HCP.CT.cov3035 <- filter(HCP.norm, Age >=30, Age < 35) %>% dplyr::select(starts_with("CT")) %>% cov()
+
+OASIS.glo.cov5560 <- filter(OASIS.norm, Age >=55, Age < 60) %>% dplyr::select(OASIS.glo) %>% cov()
+OASIS.glo.cov6065 <- filter(OASIS.norm, Age >=60, Age < 65) %>% dplyr::select(OASIS.glo) %>% cov()
+OASIS.glo.cov6570 <- filter(OASIS.norm, Age >=65, Age < 70) %>% dplyr::select(OASIS.glo) %>% cov()
+OASIS.glo.cov7075 <- filter(OASIS.norm, Age >=70, Age < 75) %>% dplyr::select(OASIS.glo) %>% cov()
+OASIS.glo.cov7580 <- filter(OASIS.norm, Age >=75, Age < 80) %>% dplyr::select(OASIS.glo) %>% cov()
+OASIS.SC.cov5560 <- filter(OASIS.norm, Age >=55, Age < 60) %>% dplyr::select(OASIS.SC) %>% cov()
+OASIS.SC.cov6065 <- filter(OASIS.norm, Age >=60, Age < 65) %>% dplyr::select(OASIS.SC) %>% cov()
+OASIS.SC.cov6570 <- filter(OASIS.norm, Age >=65, Age < 70) %>% dplyr::select(OASIS.SC) %>% cov()
+OASIS.SC.cov7075 <- filter(OASIS.norm, Age >=70, Age < 75) %>% dplyr::select(OASIS.SC) %>% cov()
+OASIS.SC.cov7580 <- filter(OASIS.norm, Age >=75, Age < 80) %>% dplyr::select(OASIS.SC) %>% cov()
+OASIS.SA.cov5560 <- filter(OASIS.norm, Age >=55, Age < 60) %>% dplyr::select(starts_with("SA")) %>% cov()
+OASIS.SA.cov6065 <- filter(OASIS.norm, Age >=60, Age < 65) %>% dplyr::select(starts_with("SA")) %>% cov()
+OASIS.SA.cov6570 <- filter(OASIS.norm, Age >=65, Age < 70) %>% dplyr::select(starts_with("SA")) %>% cov()
+OASIS.SA.cov7075 <- filter(OASIS.norm, Age >=70, Age < 75) %>% dplyr::select(starts_with("SA")) %>% cov()
+OASIS.SA.cov7580 <- filter(OASIS.norm, Age >=75, Age < 80) %>% dplyr::select(starts_with("SA")) %>% cov()
+OASIS.CT.cov5560 <- filter(OASIS.norm, Age >=55, Age < 60) %>% dplyr::select(starts_with("CT")) %>% cov()
+OASIS.CT.cov6065 <- filter(OASIS.norm, Age >=60, Age < 65) %>% dplyr::select(starts_with("CT")) %>% cov()
+OASIS.CT.cov6570 <- filter(OASIS.norm, Age >=65, Age < 70) %>% dplyr::select(starts_with("CT")) %>% cov()
+OASIS.CT.cov7075 <- filter(OASIS.norm, Age >=70, Age < 75) %>% dplyr::select(starts_with("CT")) %>% cov()
+OASIS.CT.cov7580 <- filter(OASIS.norm, Age >=75, Age < 80) %>% dplyr::select(starts_with("CT")) %>% cov()
+
+```
+
+
+```{r MD-age-bin}
+#calculate distance
+#PNC
+Global.MDu10m <- filter(PNC.M, Age <10) %>%
+  dplyr::select(PNC.glo) %>%
+  mah.dist(PNC.glo.covu10) %>% cbind("M", "<10")
+Global.MD1015m <- filter(PNC.M, Age >=10, Age <15) %>%
+  dplyr::select(PNC.glo) %>%
+  mah.dist(PNC.glo.cov1015) %>% cbind("M", "10-15")
+Global.MD1520m <- filter(PNC.M, Age >=15, Age <20) %>%
+  dplyr::select(PNC.glo) %>%
+  mah.dist(PNC.glo.cov1520) %>% cbind("M", "15-20")
+
+Global.MDu10f <- filter(PNC.F, Age <10) %>%
+  dplyr::select(PNC.glo) %>%
+  mah.dist(PNC.glo.covu10) %>% cbind("F", "<10")
+Global.MD1015f <- filter(PNC.F, Age >=10, Age <15) %>%
+  dplyr::select(PNC.glo) %>%
+  mah.dist(PNC.glo.cov1015) %>% cbind("F", "10-15")
+Global.MD1520f <- filter(PNC.F, Age >=15, Age <20) %>%
+  dplyr::select(PNC.glo) %>%
+  mah.dist(PNC.glo.cov1520) %>% cbind("F", "15-20")
+
+#HCP
+Global.MDu25m <- filter(HCP.M, Age <25) %>%
+  dplyr::select(HCP.glo) %>%
+  mah.dist(HCP.glo.covu25) %>% cbind("M", "<25")
+Global.MD2530m <- filter(HCP.M, Age >=25, Age <30) %>%
+  dplyr::select(HCP.glo) %>%
+  mah.dist(HCP.glo.cov2530) %>% cbind("M", "25-30")
+Global.MD3035m <- filter(HCP.M, Age >=30, Age <35) %>%
+  dplyr::select(HCP.glo) %>%
+  mah.dist(HCP.glo.cov3035) %>% cbind("M", "30-35")
+
+Global.MDu25f <- filter(HCP.F, Age <25) %>%
+  dplyr::select(HCP.glo) %>%
+  mah.dist(HCP.glo.covu25) %>% cbind("F", "<25")
+Global.MD2530f <- filter(HCP.F, Age >=25, Age <30) %>%
+  dplyr::select(HCP.glo) %>%
+  mah.dist(HCP.glo.cov2530) %>% cbind("F", "25-30")
+Global.MD3035f <- filter(HCP.F, Age >=30, Age <35) %>%
+  dplyr::select(HCP.glo) %>%
+  mah.dist(HCP.glo.cov3035) %>% cbind("F", "30-35")
+
+#OASIS
+Global.MD5560m <- filter(OASIS.M, Age >=55, Age <60) %>%
+  dplyr::select(OASIS.glo) %>%
+  mah.dist(OASIS.glo.cov5560) %>% cbind("M", "55-60")
+Global.MD6065m <- filter(OASIS.M, Age >=60, Age <65) %>%
+  dplyr::select(OASIS.glo) %>%
+  mah.dist(OASIS.glo.cov6065) %>% cbind("M", "60-65")
+Global.MD6570m <- filter(OASIS.M, Age >=65, Age <70) %>%
+  dplyr::select(OASIS.glo) %>%
+  mah.dist(OASIS.glo.cov6570) %>% cbind("M", "65-70")
+Global.MD7075m <- filter(OASIS.M, Age >=70, Age <75) %>%
+  dplyr::select(OASIS.glo) %>%
+  mah.dist(OASIS.glo.cov7075) %>% cbind("M", "70-75")
+Global.MD7580m <- filter(OASIS.M, Age >=75, Age <80) %>%
+  dplyr::select(OASIS.glo) %>%
+  mah.dist(OASIS.glo.cov7580) %>% cbind("M", "75-80")
+
+Global.MD5560f <- filter(OASIS.F, Age >=55, Age <60) %>%
+  dplyr::select(OASIS.glo) %>%
+  mah.dist(OASIS.glo.cov5560) %>% cbind("F", "55-60")
+Global.MD6065f <- filter(OASIS.F, Age >=60, Age <65) %>%
+  dplyr::select(OASIS.glo) %>%
+  mah.dist(OASIS.glo.cov6065) %>% cbind("F", "60-65")
+Global.MD6570f <- filter(OASIS.F, Age >=65, Age <70) %>%
+  dplyr::select(OASIS.glo) %>%
+  mah.dist(OASIS.glo.cov6570) %>% cbind("F", "65-70")
+Global.MD7075f <- filter(OASIS.F, Age >=70, Age <75) %>%
+  dplyr::select(OASIS.glo) %>%
+  mah.dist(OASIS.glo.cov7075) %>% cbind("F", "70-75")
+Global.MD7580f <- filter(OASIS.F, Age >=75, Age <80) %>%
+  dplyr::select(OASIS.glo) %>%
+  mah.dist(OASIS.glo.cov7580) %>% cbind("F", "75-80")
+
+PNC.Global.MD <- rbind(Global.MDu10m, Global.MD1015m, Global.MD1520m, Global.MDu10f, Global.MD1015f, Global.MD1520f) %>% as.data.frame(stringsAsFactors = F)
+HCP.Global.MD <- rbind(Global.MDu25m, Global.MD2530m, Global.MD3035m, Global.MDu25f, Global.MD2530f, Global.MD3035f) %>% as.data.frame(stringsAsFactors = F)
+OASIS.Global.MD <- rbind(Global.MD5560m, Global.MD6065m, Global.MD6570m ,Global.MD7075m, Global.MD7580m,
+      Global.MD5560f, Global.MD6065f, Global.MD6570f ,Global.MD7075f, Global.MD7580f) %>% as.data.frame(stringsAsFactors = F)
+Global.MD <- rbind(Global.MDu10m, Global.MD1015m, Global.MD1520m, Global.MDu10f, Global.MD1015f, Global.MD1520f, 
+                   Global.MDu25m, Global.MD2530m, Global.MD3035m, Global.MDu25f, Global.MD2530f, Global.MD3035f,
+                   Global.MD5560m, Global.MD6065m, Global.MD6570m ,Global.MD7075m, Global.MD7580m,
+                   Global.MD5560f, Global.MD6065f, Global.MD6570f ,Global.MD7075f, Global.MD7580f) %>% as.data.frame(stringsAsFactors = F)
+
+###SUBCORTICAL
+#PNC
+SC.MDu10m <- filter(PNC.M, Age <10) %>%
+  dplyr::select(PNC.SC) %>%
+  mah.dist(PNC.SC.covu10) %>% cbind("M", "<10")
+SC.MD1015m <- filter(PNC.M, Age >=10, Age <15) %>%
+  dplyr::select(PNC.SC) %>%
+  mah.dist(PNC.SC.cov1015) %>% cbind("M", "10-15")
+SC.MD1520m <- filter(PNC.M, Age >=15, Age <20) %>%
+  dplyr::select(PNC.SC) %>%
+  mah.dist(PNC.SC.cov1520) %>% cbind("M", "15-20")
+
+SC.MDu10f <- filter(PNC.F, Age <10) %>%
+  dplyr::select(PNC.SC) %>%
+  mah.dist(PNC.SC.covu10) %>% cbind("F", "<10")
+SC.MD1015f <- filter(PNC.F, Age >=10, Age <15) %>%
+  dplyr::select(PNC.SC) %>%
+  mah.dist(PNC.SC.cov1015) %>% cbind("F", "10-15")
+SC.MD1520f <- filter(PNC.F, Age >=15, Age <20) %>%
+  dplyr::select(PNC.SC) %>%
+  mah.dist(PNC.SC.cov1520) %>% cbind("F", "15-20")
+
+#HCP
+SC.MDu25m <- filter(HCP.M, Age <25) %>%
+  dplyr::select(HCP.SC) %>%
+  mah.dist(HCP.SC.covu25) %>% cbind("M", "<25")
+SC.MD2530m <- filter(HCP.M, Age >=25, Age <30) %>%
+  dplyr::select(HCP.SC) %>%
+  mah.dist(HCP.SC.cov2530) %>% cbind("M", "25-30")
+SC.MD3035m <- filter(HCP.M, Age >=30, Age <35) %>%
+  dplyr::select(HCP.SC) %>%
+  mah.dist(HCP.SC.cov3035) %>% cbind("M", "30-35")
+
+SC.MDu25f <- filter(HCP.F, Age <25) %>%
+  dplyr::select(HCP.SC) %>%
+  mah.dist(HCP.SC.covu25) %>% cbind("F", "<25")
+SC.MD2530f <- filter(HCP.F, Age >=25, Age <30) %>%
+  dplyr::select(HCP.SC) %>%
+  mah.dist(HCP.SC.cov2530) %>% cbind("F", "25-30")
+SC.MD3035f <- filter(HCP.F, Age >=30, Age <35) %>%
+  dplyr::select(HCP.SC) %>%
+  mah.dist(HCP.SC.cov3035) %>% cbind("F", "30-35")
+
+#OASIS
+SC.MD5560m <- filter(OASIS.M, Age >=55, Age <60) %>%
+  dplyr::select(OASIS.SC) %>%
+  mah.dist(OASIS.SC.cov5560) %>% cbind("M", "55-60")
+SC.MD6065m <- filter(OASIS.M, Age >=60, Age <65) %>%
+  dplyr::select(OASIS.SC) %>%
+  mah.dist(OASIS.SC.cov6065) %>% cbind("M", "60-65")
+SC.MD6570m <- filter(OASIS.M, Age >=65, Age <70) %>%
+  dplyr::select(OASIS.SC) %>%
+  mah.dist(OASIS.SC.cov6570) %>% cbind("M", "65-70")
+SC.MD7075m <- filter(OASIS.M, Age >=70, Age <75) %>%
+  dplyr::select(OASIS.SC) %>%
+  mah.dist(OASIS.SC.cov7075) %>% cbind("M", "70-75")
+SC.MD7580m <- filter(OASIS.M, Age >=75, Age <80) %>%
+  dplyr::select(OASIS.SC) %>%
+  mah.dist(OASIS.SC.cov7580) %>% cbind("M", "75-80")
+
+SC.MD5560f <- filter(OASIS.F, Age >=55, Age <60) %>%
+  dplyr::select(OASIS.SC) %>%
+  mah.dist(OASIS.SC.cov5560) %>% cbind("F", "55-60")
+SC.MD6065f <- filter(OASIS.F, Age >=60, Age <65) %>%
+  dplyr::select(OASIS.SC) %>%
+  mah.dist(OASIS.SC.cov6065) %>% cbind("F", "60-65")
+SC.MD6570f <- filter(OASIS.F, Age >=65, Age <70) %>%
+  dplyr::select(OASIS.SC) %>%
+  mah.dist(OASIS.SC.cov6570) %>% cbind("F", "65-70")
+SC.MD7075f <- filter(OASIS.F, Age >=70, Age <75) %>%
+  dplyr::select(OASIS.SC) %>%
+  mah.dist(OASIS.SC.cov7075) %>% cbind("F", "70-75")
+SC.MD7580f <- filter(OASIS.F, Age >=75, Age <80) %>%
+  dplyr::select(OASIS.SC) %>%
+  mah.dist(OASIS.SC.cov7580) %>% cbind("F", "75-80")
+
+PNC.SC.MD <- rbind(SC.MDu10m, SC.MD1015m, SC.MD1520m, SC.MDu10f, SC.MD1015f, SC.MD1520f) %>% as.data.frame(stringsAsFactors = F)
+HCP.SC.MD <- rbind(SC.MDu25m, SC.MD2530m, SC.MD3035m, SC.MDu25f, SC.MD2530f, SC.MD3035f) %>% as.data.frame(stringsAsFactors = F)
+OASIS.SC.MD <- rbind(SC.MD5560m, SC.MD6065m, SC.MD6570m ,SC.MD7075m, SC.MD7580m,
+      SC.MD5560f, SC.MD6065f, SC.MD6570f ,SC.MD7075f, SC.MD7580f) %>% as.data.frame(stringsAsFactors = F)
+SC.MD <- rbind(SC.MDu10m, SC.MD1015m, SC.MD1520m, SC.MDu10f, SC.MD1015f, SC.MD1520f, 
+                   SC.MDu25m, SC.MD2530m, SC.MD3035m, SC.MDu25f, SC.MD2530f, SC.MD3035f,
+                   SC.MD5560m, SC.MD6065m, SC.MD6570m ,SC.MD7075m, SC.MD7580m,
+                   SC.MD5560f, SC.MD6065f, SC.MD6570f ,SC.MD7075f, SC.MD7580f) %>% as.data.frame(stringsAsFactors = F)
+
+###SURFACE AREA
+#PNC
+SA.MDu10m <- filter(PNC.M, Age <10) %>%
+  dplyr::select(starts_with("SA")) %>%
+  mah.dist(PNC.SA.covu10) %>% cbind("M", "<10")
+SA.MD1015m <- filter(PNC.M, Age >=10, Age <15) %>%
+  dplyr::select(starts_with("SA")) %>%
+  mah.dist(PNC.SA.cov1015) %>% cbind("M", "10-15")
+SA.MD1520m <- filter(PNC.M, Age >=15, Age <20) %>%
+  dplyr::select(starts_with("SA")) %>%
+  mah.dist(PNC.SA.cov1520) %>% cbind("M", "15-20")
+
+SA.MDu10f <- filter(PNC.F, Age <10) %>%
+  dplyr::select(starts_with("SA")) %>%
+  mah.dist(PNC.SA.covu10) %>% cbind("F", "<10")
+SA.MD1015f <- filter(PNC.F, Age >=10, Age <15) %>%
+  dplyr::select(starts_with("SA")) %>%
+  mah.dist(PNC.SA.cov1015) %>% cbind("F", "10-15")
+SA.MD1520f <- filter(PNC.F, Age >=15, Age <20) %>%
+  dplyr::select(starts_with("SA")) %>%
+  mah.dist(PNC.SA.cov1520) %>% cbind("F", "15-20")
+
+#HCP
+SA.MDu25m <- filter(HCP.M, Age <25) %>%
+  dplyr::select(starts_with("SA")) %>%
+  mah.dist(HCP.SA.covu25) %>% cbind("M", "<25")
+SA.MD2530m <- filter(HCP.M, Age >=25, Age <30) %>%
+  dplyr::select(starts_with("SA")) %>%
+  mah.dist(HCP.SA.cov2530) %>% cbind("M", "25-30")
+SA.MD3035m <- filter(HCP.M, Age >=30, Age <35) %>%
+  dplyr::select(starts_with("SA")) %>%
+  mah.dist(HCP.SA.cov3035) %>% cbind("M", "30-35")
+
+SA.MDu25f <- filter(HCP.F, Age <25) %>%
+  dplyr::select(starts_with("SA")) %>%
+  mah.dist(HCP.SA.covu25) %>% cbind("F", "<25")
+SA.MD2530f <- filter(HCP.F, Age >=25, Age <30) %>%
+  dplyr::select(starts_with("SA")) %>%
+  mah.dist(HCP.SA.cov2530) %>% cbind("F", "25-30")
+SA.MD3035f <- filter(HCP.F, Age >=30, Age <35) %>%
+  dplyr::select(starts_with("SA")) %>%
+  mah.dist(HCP.SA.cov3035) %>% cbind("F", "30-35")
+
+#OASIS
+SA.MD5560m <- filter(OASIS.M, Age >=55, Age <60) %>%
+  dplyr::select(starts_with("SA")) %>%
+  mah.dist(OASIS.SA.cov5560) %>% cbind("M", "55-60")
+SA.MD6065m <- filter(OASIS.M, Age >=60, Age <65) %>%
+  dplyr::select(starts_with("SA")) %>%
+  mah.dist(OASIS.SA.cov6065) %>% cbind("M", "60-65")
+SA.MD6570m <- filter(OASIS.M, Age >=65, Age <70) %>%
+  dplyr::select(starts_with("SA")) %>%
+  mah.dist(OASIS.SA.cov6570) %>% cbind("M", "65-70")
+SA.MD7075m <- filter(OASIS.M, Age >=70, Age <75) %>%
+  dplyr::select(starts_with("SA")) %>%
+  mah.dist(OASIS.SA.cov7075) %>% cbind("M", "70-75")
+SA.MD7580m <- filter(OASIS.M, Age >=75, Age <80) %>%
+  dplyr::select(starts_with("SA")) %>%
+  mah.dist(OASIS.SA.cov7580) %>% cbind("M", "75-80")
+
+SA.MD5560f <- filter(OASIS.F, Age >=55, Age <60) %>%
+  dplyr::select(starts_with("SA")) %>%
+  mah.dist(OASIS.SA.cov5560) %>% cbind("F", "55-60")
+SA.MD6065f <- filter(OASIS.F, Age >=60, Age <65) %>%
+  dplyr::select(starts_with("SA")) %>%
+  mah.dist(OASIS.SA.cov6065) %>% cbind("F", "60-65")
+SA.MD6570f <- filter(OASIS.F, Age >=65, Age <70) %>%
+  dplyr::select(starts_with("SA")) %>%
+  mah.dist(OASIS.SA.cov6570) %>% cbind("F", "65-70")
+SA.MD7075f <- filter(OASIS.F, Age >=70, Age <75) %>%
+  dplyr::select(starts_with("SA")) %>%
+  mah.dist(OASIS.SA.cov7075) %>% cbind("F", "70-75")
+SA.MD7580f <- filter(OASIS.F, Age >=75, Age <80) %>%
+  dplyr::select(starts_with("SA")) %>%
+  mah.dist(OASIS.SA.cov7580) %>% cbind("F", "75-80")
+
+PNC.SA.MD <- rbind(SA.MDu10m, SA.MD1015m, SA.MD1520m, SA.MDu10f, SA.MD1015f, SA.MD1520f) %>% as.data.frame(stringsAsFactors = F)
+HCP.SA.MD <- rbind(SA.MDu25m, SA.MD2530m, SA.MD3035m, SA.MDu25f, SA.MD2530f, SA.MD3035f) %>% as.data.frame(stringsAsFactors = F)
+OASIS.SA.MD <- rbind(SA.MD5560m, SA.MD6065m, SA.MD6570m ,SA.MD7075m, SA.MD7580m,
+      SA.MD5560f, SA.MD6065f, SA.MD6570f ,SA.MD7075f, SA.MD7580f) %>% as.data.frame(stringsAsFactors = F)
+SA.MD <- rbind(SA.MDu10m, SA.MD1015m, SA.MD1520m, SA.MDu10f, SA.MD1015f, SA.MD1520f, 
+                   SA.MDu25m, SA.MD2530m, SA.MD3035m, SA.MDu25f, SA.MD2530f, SA.MD3035f,
+                   SA.MD5560m, SA.MD6065m, SA.MD6570m ,SA.MD7075m, SA.MD7580m,
+                   SA.MD5560f, SA.MD6065f, SA.MD6570f ,SA.MD7075f, SA.MD7580f) %>% as.data.frame(stringsAsFactors = F)
+
+###CORTICAL THICKNESS
+#PNC
+CT.MDu10m <- filter(PNC.M, Age <10) %>%
+  dplyr::select(starts_with("CT")) %>%
+  mah.dist(PNC.CT.covu10) %>% cbind("M", "<10")
+CT.MD1015m <- filter(PNC.M, Age >=10, Age <15) %>%
+  dplyr::select(starts_with("CT")) %>%
+  mah.dist(PNC.CT.cov1015) %>% cbind("M", "10-15")
+CT.MD1520m <- filter(PNC.M, Age >=15, Age <20) %>%
+  dplyr::select(starts_with("CT")) %>%
+  mah.dist(PNC.CT.cov1520) %>% cbind("M", "15-20")
+
+CT.MDu10f <- filter(PNC.F, Age <10) %>%
+  dplyr::select(starts_with("CT")) %>%
+  mah.dist(PNC.CT.covu10) %>% cbind("F", "<10")
+CT.MD1015f <- filter(PNC.F, Age >=10, Age <15) %>%
+  dplyr::select(starts_with("CT")) %>%
+  mah.dist(PNC.CT.cov1015) %>% cbind("F", "10-15")
+CT.MD1520f <- filter(PNC.F, Age >=15, Age <20) %>%
+  dplyr::select(starts_with("CT")) %>%
+  mah.dist(PNC.CT.cov1520) %>% cbind("F", "15-20")
+
+#HCP
+CT.MDu25m <- filter(HCP.M, Age <25) %>%
+  dplyr::select(starts_with("CT")) %>%
+  mah.dist(HCP.CT.covu25) %>% cbind("M", "<25")
+CT.MD2530m <- filter(HCP.M, Age >=25, Age <30) %>%
+  dplyr::select(starts_with("CT")) %>%
+  mah.dist(HCP.CT.cov2530) %>% cbind("M", "25-30")
+CT.MD3035m <- filter(HCP.M, Age >=30, Age <35) %>%
+  dplyr::select(starts_with("CT")) %>%
+  mah.dist(HCP.CT.cov3035) %>% cbind("M", "30-35")
+
+CT.MDu25f <- filter(HCP.F, Age <25) %>%
+  dplyr::select(starts_with("CT")) %>%
+  mah.dist(HCP.CT.covu25) %>% cbind("F", "<25")
+CT.MD2530f <- filter(HCP.F, Age >=25, Age <30) %>%
+  dplyr::select(starts_with("CT")) %>%
+  mah.dist(HCP.CT.cov2530) %>% cbind("F", "25-30")
+CT.MD3035f <- filter(HCP.F, Age >=30, Age <35) %>%
+  dplyr::select(starts_with("CT")) %>%
+  mah.dist(HCP.CT.cov3035) %>% cbind("F", "30-35")
+
+#OASIS
+CT.MD5560m <- filter(OASIS.M, Age >=55, Age <60) %>%
+  dplyr::select(starts_with("CT")) %>%
+  mah.dist(OASIS.CT.cov5560) %>% cbind("M", "55-60")
+CT.MD6065m <- filter(OASIS.M, Age >=60, Age <65) %>%
+  dplyr::select(starts_with("CT")) %>%
+  mah.dist(OASIS.CT.cov6065) %>% cbind("M", "60-65")
+CT.MD6570m <- filter(OASIS.M, Age >=65, Age <70) %>%
+  dplyr::select(starts_with("CT")) %>%
+  mah.dist(OASIS.CT.cov6570) %>% cbind("M", "65-70")
+CT.MD7075m <- filter(OASIS.M, Age >=70, Age <75) %>%
+  dplyr::select(starts_with("CT")) %>%
+  mah.dist(OASIS.CT.cov7075) %>% cbind("M", "70-75")
+CT.MD7580m <- filter(OASIS.M, Age >=75, Age <80) %>%
+  dplyr::select(starts_with("CT")) %>%
+  mah.dist(OASIS.CT.cov7580) %>% cbind("M", "75-80")
+
+CT.MD5560f <- filter(OASIS.F, Age >=55, Age <60) %>%
+  dplyr::select(starts_with("CT")) %>%
+  mah.dist(OASIS.CT.cov5560) %>% cbind("F", "55-60")
+CT.MD6065f <- filter(OASIS.F, Age >=60, Age <65) %>%
+  dplyr::select(starts_with("CT")) %>%
+  mah.dist(OASIS.CT.cov6065) %>% cbind("F", "60-65")
+CT.MD6570f <- filter(OASIS.F, Age >=65, Age <70) %>%
+  dplyr::select(starts_with("CT")) %>%
+  mah.dist(OASIS.CT.cov6570) %>% cbind("F", "65-70")
+CT.MD7075f <- filter(OASIS.F, Age >=70, Age <75) %>%
+  dplyr::select(starts_with("CT")) %>%
+  mah.dist(OASIS.CT.cov7075) %>% cbind("F", "70-75")
+CT.MD7580f <- filter(OASIS.F, Age >=75, Age <80) %>%
+  dplyr::select(starts_with("CT")) %>%
+  mah.dist(OASIS.CT.cov7580) %>% cbind("F", "75-80")
+
+PNC.CT.MD <- rbind(CT.MDu10m, CT.MD1015m, CT.MD1520m, CT.MDu10f, CT.MD1015f, CT.MD1520f) %>% as.data.frame(stringsAsFactors = F)
+HCP.CT.MD <- rbind(CT.MDu25m, CT.MD2530m, CT.MD3035m, CT.MDu25f, CT.MD2530f, CT.MD3035f) %>% as.data.frame(stringsAsFactors = F)
+OASIS.CT.MD <- rbind(CT.MD5560m, CT.MD6065m, CT.MD6570m ,CT.MD7075m, CT.MD7580m,
+      CT.MD5560f, CT.MD6065f, CT.MD6570f ,CT.MD7075f, CT.MD7580f) %>% as.data.frame(stringsAsFactors = F)
+CT.MD <- rbind(CT.MDu10m, CT.MD1015m, CT.MD1520m, CT.MDu10f, CT.MD1015f, CT.MD1520f, 
+                   CT.MDu25m, CT.MD2530m, CT.MD3035m, CT.MDu25f, CT.MD2530f, CT.MD3035f,
+                   CT.MD5560m, CT.MD6065m, CT.MD6570m ,CT.MD7075m, CT.MD7580m,
+                   CT.MD5560f, CT.MD6065f, CT.MD6570f ,CT.MD7075f, CT.MD7580f) %>% as.data.frame(stringsAsFactors = F)
+
+```
+
+```{r MD stats of bins}
+
+############# with age bins
+
+df.ls.MD.glo <- c("PNC.Global.MD", "HCP.Global.MD", "OASIS.Global.MD")
+df.ls.MD.SC <- c("PNC.SC.MD", "HCP.SC.MD", "OASIS.SC.MD")
+df.ls.MD.SA <- c("PNC.SA.MD", "HCP.SA.MD", "OASIS.SA.MD")
+df.ls.MD.CT <- c("PNC.CT.MD", "HCP.CT.MD", "OASIS.CT.MD")
+
+
+Global.MD.bin  <- lapply(df.ls.MD.glo, function(i){
+  lm(as.numeric(.) ~ V2*V3, data=get(i))
+})
+num=length(Global.MD.bin)
+
+Globalstats.MD.bin <- extract(Global.MD.bin, num)
+
+SC.MD.bin  <- lapply(df.ls.MD.SC, function(i){
+  lm(as.numeric(.) ~ V2*V3, data=get(i))
+})
+SCstats.MD.bin <- extract(SC.MD.bin, num)
+
+SA.MD.bin  <- lapply(df.ls.MD.SA, function(i){
+  lm(as.numeric(.) ~ V2*V3, data=get(i))
+})
+SAstats.MD.bin <- extract(SA.MD.bin, num)
+
+CT.MD.bin  <- lapply(df.ls.MD.CT, function(i){
+  lm(as.numeric(.) ~ V2*V3, data=get(i))
+})
+CTstats.MD.bin <- extract(CT.MD.bin, num)
+
+names(Globalstats.MD.bin) <- paste0('Glo_',names(Globalstats.MD.bin))
+names(SCstats.MD.bin) <- paste0('SC_',names(SCstats.MD.bin))
+names(SAstats.MD.bin) <- paste0('SA_',names(SAstats.MD.bin))
+names(CTstats.MD.bin) <- paste0('CT_',names(CTstats.MD.bin))
+
+stats.MD.bin <- cbind(Globalstats.MD.bin, SCstats.MD.bin, SAstats.MD.bin, CTstats.MD.bin)
+
+stats.MD.bin <- apply(stats.MD.bin ,2,as.character)
+rownames(stats.MD.bin) <- c("PNC", "HCP", "OASIS")
+MD.bin.file <- paste(outdir, "Mah_statsAgeIN_binned.csv", sep="/")
+write.csv(stats.MD.bin, file=MD.bin.file, row.names = T)
+print(stats.MD.bin)
+
+```
+```{r MD plot-bins}
+
+PNC.glo.figMD <- ggplot(PNC.Global.MD, aes(x=V3, colour= V2, y=as.numeric(.))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Mahalanobis Distance") + ylim(0,6) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+PNC.SC.figMD <- ggplot(PNC.SC.MD, aes(x=V3, colour= V2, y=as.numeric(.))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Mahalanobis Distance") + ylim(0,7.5) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+PNC.SA.figMD <- ggplot(PNC.SA.MD, aes(x=V3, colour= V2, y=as.numeric(.))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Mahalanobis Distance") + ylim(0,20) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+PNC.CT.figMD <- ggplot(PNC.CT.MD, aes(x=V3, colour= V2, y=as.numeric(.))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Mahalanobis Distance") + ylim(0,20) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+
+HCP.glo.figMD <- ggplot(HCP.Global.MD, aes(x=V3, colour= V2, y=as.numeric(.))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Mahalanobis Distance") + ylim(0,6) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+HCP.SC.figMD <- ggplot(HCP.SC.MD, aes(x=V3, colour= V2, y=as.numeric(.))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Mahalanobis Distance") + ylim(0,7.5) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+HCP.SA.figMD <- ggplot(HCP.SA.MD, aes(x=V3, colour= V2, y=as.numeric(.))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Mahalanobis Distance") + ylim(0,20) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+HCP.CT.figMD <- ggplot(HCP.CT.MD, aes(x=V3, colour= V2, y=as.numeric(.))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Mahalanobis Distance") + ylim(0,20) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+
+OASIS.glo.figMD <- ggplot(OASIS.Global.MD, aes(x=V3, colour= V2, y=as.numeric(.))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Mahalanobis Distance") + ylim(0,6) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+OASIS.SC.figMD <- ggplot(OASIS.SC.MD, aes(x=V3, colour= V2, y=as.numeric(.))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Mahalanobis Distance") + ylim(0,7.5) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+OASIS.SA.figMD <- ggplot(OASIS.SA.MD, aes(x=V3, colour= V2, y=as.numeric(.))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Mahalanobis Distance") + ylim(0,20) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+OASIS.CT.figMD <- ggplot(OASIS.CT.MD, aes(x=V3, colour= V2, y=as.numeric(.))) + geom_boxplot(width=0.3, size=0.4, alpha=0.4) +
+              theme(axis.text = element_text(size=8), axis.title=element_text(size=10), legend.position="none") +
+                      ylab("Mahalanobis Distance") + ylim(0,20) + geom_smooth(span = 0.5) +xlab("Age (years)")
+
+MD.bin.figMD <- plot_grid(PNC.glo.figMD, HCP.glo.figMD, OASIS.glo.figMD, PNC.SC.figMD, HCP.SC.figMD, OASIS.SC.figMD, PNC.SA.figMD, HCP.SA.figMD, OASIS.SA.figMD,
+                      PNC.CT.figMD, HCP.CT.figMD, OASIS.CT.figMD, align="hv", ncol=3)
+
+
+MD.bin.fig.file <- paste(outdir, "Comb_Mah_AgeIN_bin.png", sep="/")
+ggsave(MD.bin.fig.file, MD.bin.figMD, dpi=300, width = 21, height = 20, units = "cm") #####
+```

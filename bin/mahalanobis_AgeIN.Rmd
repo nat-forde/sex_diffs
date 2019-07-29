@@ -24,7 +24,7 @@ library(MatchIt)
 
 ## set all the paths
 #HCP
-HCP.res <- read.csv("/projects/nforde/HCP/stats/HCP/AllresAgeIN.csv")
+HCP.res <- read.csv("/projects/nforde/HCP/stats/HCP/AllresAgeIN.csv") 
 PNC.res <- read.csv("/projects/nforde/HCP/stats/PNC/AllresAgeIN.csv")
 OASIS.res <- read.csv("/projects/nforde/HCP/stats/OASIS/AllresAgeIN.csv")
 
@@ -35,7 +35,7 @@ OASIS.norm <- OASIS.res[c(2:length(OASIS.res))]
 names(HCP.norm)[names(HCP.norm) == 'Age_in_Yrs'] <- 'Age'
 names(PNC.norm)[names(PNC.norm) == 'age_at_cnb'] <- 'Age'
 
-outdir <- "/projects/nforde/HCP/stats/combined_figures"
+outdir <- "/projects/nforde/HCP/stats/combined_figures/"
 
 ```
 ## define functions
@@ -293,7 +293,7 @@ HCP.tot.cov <- cov(HCP.norm[c(1:(length(HCP.norm)-3))])
 HCP.glo.cov <- cov(HCP.norm[HCP.glo])
 HCP.SC.cov <- cov(HCP.norm[HCP.SC])
 HCP.SA.cov <- cov(dplyr::select(HCP.norm, starts_with("SA")))
-HCP.CT.cov <- cov(dplyr::select(HCP.norm, starts_with("SA")))
+HCP.CT.cov <- cov(dplyr::select(HCP.norm, starts_with("CT")))
 
 #calculate distance
 HCP.M$mah.tot <- mah.dist(HCP.M[c(1:(length(HCP.M)-3))], HCP.tot.cov)
@@ -316,7 +316,7 @@ PNC.tot.cov <- cov(PNC.norm[c(1:(length(PNC.norm)-3))])
 PNC.glo.cov <- cov(PNC.norm[PNC.glo])
 PNC.SC.cov <- cov(PNC.norm[PNC.SC])
 PNC.SA.cov <- cov(dplyr::select(PNC.norm, starts_with("SA")))
-PNC.CT.cov <- cov(dplyr::select(PNC.norm, starts_with("SA")))
+PNC.CT.cov <- cov(dplyr::select(PNC.norm, starts_with("CT")))
 
 #calc distances
 PNC.M$mah.tot <- mah.dist(PNC.M[c(1:(length(PNC.M)-3))], PNC.tot.cov) 
@@ -339,7 +339,7 @@ OASIS.tot.cov <- cov(OASIS.norm[c(1:(length(OASIS.norm)-3))])
 OASIS.glo.cov <- cov(OASIS.norm[OASIS.glo])
 OASIS.SC.cov <- cov(OASIS.norm[OASIS.SC])
 OASIS.SA.cov <- cov(dplyr::select(OASIS.norm, starts_with("SA")))
-OASIS.CT.cov <- cov(dplyr::select(OASIS.norm, starts_with("SA")))
+OASIS.CT.cov <- cov(dplyr::select(OASIS.norm, starts_with("CT")))
 
 #calculate distance
 OASIS.M$mah.tot <- mah.dist(OASIS.M[c(1:(length(OASIS.M)-3))], OASIS.tot.cov) 
@@ -391,7 +391,7 @@ names(SCstats.mah) <- paste0('SC_',names(SCstats.mah))
 names(SAstats.mah) <- paste0('SA_',names(SAstats.mah))
 names(CTstats.mah) <- paste0('CT_',names(CTstats.mah))
 
-stats.mah <- cbind(Totalstats.mah, Globalstats.mah, SCstats.mah, SAstats.mah, CTstats.mah)
+stats.mah <- cbind(Globalstats.mah, SCstats.mah, SAstats.mah, CTstats.mah)
 
 stats.mah <- apply(stats.mah,2,as.character)
 rownames(stats.mah) <- mah.ls
@@ -399,6 +399,8 @@ Mah.out.file <- paste(outdir, "Mah_statsAgeIn.csv", sep="/")
 write.csv(stats.mah, file=Mah.out.file, row.names = T)
 print(stats.mah)
 
+
+#ggplot(OASIS.CT.cov.df.m, aes(Var1, Var2)) +geom_tile(aes(fill=value)) +scale_fill_gradient2(low=muted("blue"), high=muted("red"))
 ```
 #Plotting Mahalanobis distance
 ```{r Mahalanobis Distances plotted by age}
@@ -464,70 +466,73 @@ ggsave(mah.plt.file, mah.plt, dpi=300, width = 21, height = 20, units = "cm") ##
 
 
 ```
+
+
+
 #cosine
 ```{r Cosine Angle}
 # centroid changes with age. Need to bin by age and calculate cosine angle to centroid within age bin
 
 #match samples and run whole samples
-library(MatchIt)
-
-PNC.norm$treat <- ifelse(PNC.norm$Sex == "M", 1, 0)
-PNC.mat <- matchit(treat ~ Age, data=PNC.norm)
-PNC.norm.mat <- match.data(PNC.mat)
-
-HCP.norm$treat <- ifelse(HCP.norm$Sex == "Male", 1, 0)
-HCP.mat <- matchit(treat ~ Age, data=HCP.norm)
-HCP.norm.mat <- match.data(HCP.mat)
-
-OASIS.norm$treat <- ifelse(OASIS.norm$Sex == "M", 1, 0)
-OASIS.mat <- OASIS.norm %>% filter(Age >=55, Age <= 80) %>% matchit(treat ~ Age, data = .)
-OASIS.norm.mat <- match.data(OASIS.mat)
+# library(MatchIt)
+# 
+# PNC.norm$treat <- ifelse(PNC.norm$Sex == "M", 1, 0)
+# PNC.mat <- matchit(treat ~ Age, data=PNC.norm)
+# PNC.norm.mat <- match.data(PNC.mat)
+# 
+# HCP.norm$treat <- ifelse(HCP.norm$Sex == "Male", 1, 0)
+# HCP.mat <- matchit(treat ~ Age, data=HCP.norm)
+# HCP.norm.mat <- match.data(HCP.mat)
+# 
+# OASIS.norm$treat <- ifelse(OASIS.norm$Sex == "M", 1, 0)
+# OASIS.mat <- OASIS.norm %>% filter(Age >=55, Age <= 80) %>% matchit(treat ~ Age, data = .)
+# OASIS.norm.mat <- match.data(OASIS.mat)
 
 ########### UN MATCHED #####################
-# #make unit vectors
-# #HCP
-# HCP.unit <- apply(HCP.norm[c(1:(length(HCP.norm)-3))], 1, unit1) %>% t() %>% cbind(HCP.norm[c("Age", "Subject", "Sex")])
-# HCP.unit.global <- apply(HCP.norm[HCP.glo], 1, unit1) %>% t() %>% cbind(HCP.norm[c("Age", "Subject", "Sex")])
-# HCP.unit.SC <- apply(HCP.norm[HCP.SC], 1, unit1) %>% t() %>% cbind(HCP.norm[c("Age", "Subject", "Sex")])
-# HCP.unit.SA <- apply(dplyr::select(HCP.norm, starts_with("SA")), 1, unit1) %>% t() %>% cbind(HCP.norm[c("Age", "Subject", "Sex")])
-# HCP.unit.CT <- apply(dplyr::select(HCP.norm, starts_with("CT")), 1, unit1) %>% t() %>% cbind(HCP.norm[c("Age", "Subject", "Sex")])
-# 
-# ## PNC
-# PNC.unit <- apply(PNC.norm[c(1:(length(PNC.norm)-3))], 1, unit1) %>% t() %>% cbind(PNC.norm[c("Age", "ID", "Sex")])
-# PNC.unit.global <- apply(PNC.norm[PNC.glo], 1, unit1) %>% t() %>% cbind(PNC.norm[c("Age", "ID", "Sex")])
-# PNC.unit.SC <- apply(PNC.norm[PNC.SC], 1, unit1) %>%  t() %>% cbind(PNC.norm[c("Age", "ID", "Sex")])
-# PNC.unit.SA <- apply(dplyr::select(PNC.norm, starts_with("SA")), 1, unit1) %>% t() %>% cbind(PNC.norm[c("Age", "ID", "Sex")])
-# PNC.unit.CT <- apply(dplyr::select(PNC.norm, starts_with("CT")), 1, unit1) %>% t() %>% cbind(PNC.norm[c("Age", "ID", "Sex")])
-# 
-# ## OASIS
-# OASIS.unit <- apply(OASIS.norm[c(1:(length(OASIS.norm)-3))], 1, unit1) %>% t() %>% cbind(OASIS.norm[c("Age", "Subject", "Sex")])
-# OASIS.unit.global <- apply(OASIS.norm[OASIS.glo], 1, unit1) %>% t() %>% cbind(OASIS.norm[c("Age", "Subject", "Sex")])
-# OASIS.unit.SC <- apply(OASIS.norm[OASIS.SC], 1, unit1) %>%  t() %>% cbind(OASIS.norm[c("Age", "Subject", "Sex")])
-# OASIS.unit.SA <- apply(dplyr::select(OASIS.norm, starts_with("SA")), 1, unit1) %>% t() %>% cbind(OASIS.norm[c("Age", "Subject", "Sex")])
-# OASIS.unit.CT <- apply(dplyr::select(OASIS.norm, starts_with("CT")), 1, unit1) %>% t() %>% cbind(OASIS.norm[c("Age", "Subject", "Sex")])
+#make unit vectors
+#HCP
+HCP.unit <- apply(HCP.norm[c(1:(length(HCP.norm)-3))], 1, unit1) %>% t() %>% cbind(HCP.norm[c("Age", "Subject", "Sex")])
+HCP.unit.global <- apply(HCP.norm[HCP.glo], 1, unit1) %>% t() %>% cbind(HCP.norm[c("Age", "Subject", "Sex")])
+HCP.unit.SC <- apply(HCP.norm[HCP.SC], 1, unit1) %>% t() %>% cbind(HCP.norm[c("Age", "Subject", "Sex")])
+HCP.unit.SA <- apply(dplyr::select(HCP.norm, starts_with("SA")), 1, unit1) %>% t() %>% cbind(HCP.norm[c("Age", "Subject", "Sex")])
+HCP.unit.CT <- apply(dplyr::select(HCP.norm, starts_with("CT")), 1, unit1) %>% t() %>% cbind(HCP.norm[c("Age", "Subject", "Sex")])
+
+## PNC
+PNC.unit <- apply(PNC.norm[c(1:(length(PNC.norm)-3))], 1, unit1) %>% t() %>% cbind(PNC.norm[c("Age", "ID", "Sex")])
+PNC.unit.global <- apply(PNC.norm[PNC.glo], 1, unit1) %>% t() %>% cbind(PNC.norm[c("Age", "ID", "Sex")])
+PNC.unit.SC <- apply(PNC.norm[PNC.SC], 1, unit1) %>%  t() %>% cbind(PNC.norm[c("Age", "ID", "Sex")])
+PNC.unit.SA <- apply(dplyr::select(PNC.norm, starts_with("SA")), 1, unit1) %>% t() %>% cbind(PNC.norm[c("Age", "ID", "Sex")])
+PNC.unit.CT <- apply(dplyr::select(PNC.norm, starts_with("CT")), 1, unit1) %>% t() %>% cbind(PNC.norm[c("Age", "ID", "Sex")])
+
+## OASIS
+OASIS.unit <- apply(OASIS.norm[c(1:(length(OASIS.norm)-3))], 1, unit1) %>% t() %>% cbind(OASIS.norm[c("Age", "Subject", "Sex")])
+OASIS.unit.global <- apply(OASIS.norm[OASIS.glo], 1, unit1) %>% t() %>% cbind(OASIS.norm[c("Age", "Subject", "Sex")])
+OASIS.unit.SC <- apply(OASIS.norm[OASIS.SC], 1, unit1) %>%  t() %>% cbind(OASIS.norm[c("Age", "Subject", "Sex")])
+OASIS.unit.SA <- apply(dplyr::select(OASIS.norm, starts_with("SA")), 1, unit1) %>% t() %>% cbind(OASIS.norm[c("Age", "Subject", "Sex")])
+OASIS.unit.CT <- apply(dplyr::select(OASIS.norm, starts_with("CT")), 1, unit1) %>% t() %>% cbind(OASIS.norm[c("Age", "Subject", "Sex")])
 
 ######### MATCHED ###########
 #make unit vectors
-#HCP
-HCP.unit <- apply(HCP.norm.mat[c(1:(length(HCP.norm.mat)-6))], 1, unit1) %>% t() %>% cbind(HCP.norm.mat[c("Age", "Subject", "Sex")])
-HCP.unit.global <- apply(HCP.norm.mat[HCP.glo], 1, unit1) %>% t() %>% cbind(HCP.norm.mat[c("Age", "Subject", "Sex")])
-HCP.unit.SC <- apply(HCP.norm.mat[HCP.SC], 1, unit1) %>% t() %>% cbind(HCP.norm.mat[c("Age", "Subject", "Sex")])
-HCP.unit.SA <- apply(dplyr::select(HCP.norm.mat, starts_with("SA")), 1, unit1) %>% t() %>% cbind(HCP.norm.mat[c("Age", "Subject", "Sex")])
-HCP.unit.CT <- apply(dplyr::select(HCP.norm.mat, starts_with("CT")), 1, unit1) %>% t() %>% cbind(HCP.norm.mat[c("Age", "Subject", "Sex")])
-
-## PNC
-PNC.unit <- apply(PNC.norm.mat[c(1:(length(PNC.norm.mat)-6))], 1, unit1) %>% t() %>% cbind(PNC.norm.mat[c("Age", "ID", "Sex")])
-PNC.unit.global <- apply(PNC.norm.mat[PNC.glo], 1, unit1) %>% t() %>% cbind(PNC.norm.mat[c("Age", "ID", "Sex")])
-PNC.unit.SC <- apply(PNC.norm.mat[PNC.SC], 1, unit1) %>%  t() %>% cbind(PNC.norm.mat[c("Age", "ID", "Sex")])
-PNC.unit.SA <- apply(dplyr::select(PNC.norm.mat, starts_with("SA")), 1, unit1) %>% t() %>% cbind(PNC.norm.mat[c("Age", "ID", "Sex")])
-PNC.unit.CT <- apply(dplyr::select(PNC.norm.mat, starts_with("CT")), 1, unit1) %>% t() %>% cbind(PNC.norm.mat[c("Age", "ID", "Sex")])
-
-## OASIS
-OASIS.unit <- apply(OASIS.norm.mat[c(1:(length(OASIS.norm.mat)-6))], 1, unit1) %>% t() %>% cbind(OASIS.norm.mat[c("Age", "Subject", "Sex")])
-OASIS.unit.global <- apply(OASIS.norm.mat[OASIS.glo], 1, unit1) %>% t() %>% cbind(OASIS.norm.mat[c("Age", "Subject", "Sex")])
-OASIS.unit.SC <- apply(OASIS.norm.mat[OASIS.SC], 1, unit1) %>%  t() %>% cbind(OASIS.norm.mat[c("Age", "Subject", "Sex")])
-OASIS.unit.SA <- apply(dplyr::select(OASIS.norm.mat, starts_with("SA")), 1, unit1) %>% t() %>% cbind(OASIS.norm.mat[c("Age", "Subject", "Sex")])
-OASIS.unit.CT <- apply(dplyr::select(OASIS.norm.mat, starts_with("CT")), 1, unit1) %>% t() %>% cbind(OASIS.norm.mat[c("Age", "Subject", "Sex")])
+# #HCP
+# HCP.unit <- apply(HCP.norm.mat[c(1:(length(HCP.norm.mat)-6))], 1, unit1) %>% t() %>% cbind(HCP.norm.mat[c("Age", "Subject", "Sex")])
+# HCP.unit.global <- apply(HCP.norm.mat[HCP.glo], 1, unit1) %>% t() %>% cbind(HCP.norm.mat[c("Age", "Subject", "Sex")])
+# HCP.unit.SC <- apply(HCP.norm.mat[HCP.SC], 1, unit1) %>% t() %>% cbind(HCP.norm.mat[c("Age", "Subject", "Sex")])
+# HCP.unit.SA <- apply(dplyr::select(HCP.norm.mat, starts_with("SA")), 1, unit1) %>% t() %>% cbind(HCP.norm.mat[c("Age", "Subject", "Sex")])
+# HCP.unit.CT <- apply(dplyr::select(HCP.norm.mat, starts_with("CT")), 1, unit1) %>% t() %>% cbind(HCP.norm.mat[c("Age", "Subject", "Sex")])
+# 
+# ## PNC
+# PNC.unit <- apply(PNC.norm.mat[c(1:(length(PNC.norm.mat)-6))], 1, unit1) %>% t() %>% cbind(PNC.norm.mat[c("Age", "ID", "Sex")])
+# PNC.unit.global <- apply(PNC.norm.mat[PNC.glo], 1, unit1) %>% t() %>% cbind(PNC.norm.mat[c("Age", "ID", "Sex")])
+# PNC.unit.SC <- apply(PNC.norm.mat[PNC.SC], 1, unit1) %>%  t() %>% cbind(PNC.norm.mat[c("Age", "ID", "Sex")])
+# PNC.unit.SA <- apply(dplyr::select(PNC.norm.mat, starts_with("SA")), 1, unit1) %>% t() %>% cbind(PNC.norm.mat[c("Age", "ID", "Sex")])
+# PNC.unit.CT <- apply(dplyr::select(PNC.norm.mat, starts_with("CT")), 1, unit1) %>% t() %>% cbind(PNC.norm.mat[c("Age", "ID", "Sex")])
+# 
+# ## OASIS
+# OASIS.unit <- apply(OASIS.norm.mat[c(1:(length(OASIS.norm.mat)-6))], 1, unit1) %>% t() %>% cbind(OASIS.norm.mat[c("Age", "Subject", "Sex")])
+# OASIS.unit.global <- apply(OASIS.norm.mat[OASIS.glo], 1, unit1) %>% t() %>% cbind(OASIS.norm.mat[c("Age", "Subject", "Sex")])
+# OASIS.unit.SC <- apply(OASIS.norm.mat[OASIS.SC], 1, unit1) %>%  t() %>% cbind(OASIS.norm.mat[c("Age", "Subject", "Sex")])
+# OASIS.unit.SA <- apply(dplyr::select(OASIS.norm.mat, starts_with("SA")), 1, unit1) %>% t() %>% cbind(OASIS.norm.mat[c("Age", "Subject", "Sex")])
+# OASIS.unit.CT <- apply(dplyr::select(OASIS.norm.mat, starts_with("CT")), 1, unit1) %>% t() %>% cbind(OASIS.norm.mat[c("Age", "Subject", "Sex")])
 
 # have to do this again when groups are matched
 #divide by sex

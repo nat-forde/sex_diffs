@@ -209,8 +209,8 @@ geom_split_violin <- function (mapping = NULL, data = NULL, stat = "ydensity", p
 ```
 # organise
 ```{r organise data}
-demog <- merge(behaviour, restricted, by = "Subject")
-demogs <- filter(demog, !grepl('C', QC_Issue)) # remove those rated C; head coil instability
+demogs <- merge(behaviour, restricted, by = "Subject")
+#demogs <- filter(demog, !grepl('C', QC_Issue)) # remove those rated C; head coil instability
 
 demogs$Sex <- NA
 demogs$Sex[demogs$Gender=="M"] <- "Male"  
@@ -444,7 +444,7 @@ OV3.res <- plot_grid(plotlist=OVplots_vio.res, align="hv", ncol =3)
 
 OVfile.vio.res <- paste(outdir, "OVgraphVioRES.png", sep="/")
 
-ggsave(OVfile.vio.res, OV3.res, dpi=300, width = 21, height = 14, units = "cm") #########
+#ggsave(OVfile.vio.res, OV3.res, dpi=300, width = 21, height = 14, units = "cm") #########
 
 #alt config
 AltOV1 <- plot_grid((OVplots_vio[[1]] + ylab("Total Brain Volume") +ylim(-4,4)),
@@ -1233,15 +1233,15 @@ outdir_combined <- "/projects/nforde/HCP/stats/combined_figures"
 # Comb_SC_plot <- plot_grid(PNC_SCraw, PNC_SCcor, HCP_SCraw, HCP_SCcor, OASIS_SCraw, OASIS_SCcor,
 #                           PNC_SCrawVR, PNC_SCcorVR, HCP_SCrawVR,  HCP_SCcorVR, OASIS_SCrawVR, OASIS_SCcorVR, align="hv", ncol = 6,
 #           labels=c('A', 'B', 'C', 'D','E', 'F','G', 'H', 'I', 'J','K','L'), label_size=12)
-# 
+#
 # Comb_SA_plot <- plot_grid(PNC_SAraw, HCP_SAraw,  OASIS_SAraw,  PNC_SAcor, HCP_SAcor,  OASIS_SAcor,
 #                           PNC_SArawVR, HCP_SArawVR,  OASIS_SArawVR,  PNC_SAcorVR, HCP_SAcorVR,  OASIS_SAcorVR, align="hv", ncol = 3,
 #           labels=c('A', 'B', 'C', '','', '','D', 'E', 'F', '','',''), label_size=12)
-# 
+#
 # Comb_CT_plot <- plot_grid(PNC_CTraw, HCP_CTraw,  OASIS_CTraw,  PNC_CTcor, HCP_CTcor,  OASIS_CTcor,
 #                           PNC_CTrawVR, HCP_CTrawVR,  OASIS_CTrawVR,  PNC_CTcorVR, HCP_CTcorVR,  OASIS_CTcorVR, align="hv", ncol = 3,
 #           labels=c('A', 'B', 'C', '','', '','D', 'E', 'F', '','',''), label_size=12)
-# 
+#
 # #name and save
 # Comb_SA_plot.file <- paste(outdir_combined, "HCP_PNC_OASIS_SAatlas.png", sep="/")
 # Comb_CT_plot.file <- paste(outdir_combined, "HCP_PNC_OASIS_CTatlas.png", sep="/")
@@ -1256,7 +1256,7 @@ Comb_SC_VR_plot <- plot_grid(PNC_SCrawVR, PNC_SCcorVR, HCP_SCrawVR, HCP_SCcorVR,
 
 # Comb_SA_VR_plot <- plot_grid(PNC_SArawVR, HCP_SArawVR,  OASIS_SArawVR,  PNC_SAcorVR, HCP_SAcorVR,  OASIS_SAcorVR, align="hv", ncol = 3,
 #           labels=c('A', 'B', 'C', '','', ''), label_size=12)
-# 
+#
 # Comb_CT_VR_plot <- plot_grid(PNC_CTrawVR, HCP_CTrawVR,  OASIS_CTrawVR,  PNC_CTcorVR, HCP_CTcorVR,  OASIS_CTcorVR, align="hv", ncol = 3,
 #           labels=c('A', 'B', 'C', '','', ''), label_size=12)
 
@@ -1278,7 +1278,7 @@ Comb_SC_x_plot <- plot_grid(PNC_SCraw, PNC_SCcor, HCP_SCraw,  HCP_SCcor, OASIS_S
 
 # Comb_SA_x_plot <- plot_grid(PNC_SAraw, HCP_SAraw,  OASIS_SAraw,  PNC_SAcor, HCP_SAcor,  OASIS_SAcor, align="hv", ncol = 3,
 #           labels=c('A', 'B', 'C', '','', ''), label_size=12)
-# 
+#
 # Comb_CT_x_plot <- plot_grid(PNC_CTraw, HCP_CTraw,  OASIS_CTraw,  PNC_CTcor, HCP_CTcor,  OASIS_CTcor, align="hv", ncol = 3,
 #           labels=c('A', 'B', 'C', '','', ''), label_size=12)
 
@@ -1296,7 +1296,7 @@ ggsave(Comb_SC_x_plot.file, Comb_SC_x_plot, dpi=300, width = 21, height = 10, un
 ggsave(Comb_Cort_x_plot.file, Comb_Cort_x_plot, dpi=300, width = 21, height = 20, units = "cm")
 
 #global
-Comb_OV_Vio <- plot_grid((PNC_OVplots_vio[[1]] + ylab("Total Brain Volume") + ylim(-4,4) + 
+Comb_OV_Vio <- plot_grid((PNC_OVplots_vio[[1]] + ylab("Total Brain Volume") + ylim(-4,4) +
                             theme(axis.ticks.x=element_blank())), NULL,
                           (HCP_OVplots_vio[[1]] + ylab("Total Brain Volume") + ylim(-4,4) +
                            theme(axis.ticks.x=element_blank())), NULL ,

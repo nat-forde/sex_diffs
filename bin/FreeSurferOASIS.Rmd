@@ -318,6 +318,9 @@ for (i in 1:length(overall)) {
 Vol.resZ <- Vol.res %>% select(contains(".resid")) %>% apply(2, scale, scale = TRUE) %>%
   cbind(Vol.res[c("Sex", "Age", "Subject")]) %>% merge(TBVageres.df[c("Subject", ".residZ")], by= "Subject")
 
+Vol.Z <- Vol.res %>% select(overall) %>% apply(2, scale, scale = TRUE) %>%
+  cbind(Vol.res[c("Sex", "Age", "Subject")]) 
+
 OVres_age_ls <-Vol.resZ %>% select(contains("age.resid")) %>% names
 OVres_full_ls <-Vol.resZ %>% select(contains("Full.resid")) %>% names
 
@@ -471,6 +474,8 @@ for (i in 1:length(SubCortLR)) {
 }
 #norm
 SC.resZ <- SC.res %>% select(contains(".resid")) %>% apply(2, scale, scale = TRUE) %>%
+  cbind(SC.res[c("Sex", "Age", "Subject")]) 
+SC.Z <- SC.res %>% select(SubCortLR) %>% apply(2, scale, scale = TRUE) %>%
   cbind(SC.res[c("Sex", "Age", "Subject")]) 
 
 SCres_age_ls <-SC.resZ %>% select(contains("age.resid")) %>% names
@@ -709,6 +714,8 @@ for (i in 1:length(CortLR)) {
 #norm
 CT.resZ <- CT.res %>% select(contains(".resid")) %>% apply(2, scale, scale = TRUE) %>%
   cbind(CT.res[c("Sex", "Age", "Subject")]) 
+CT.Z <- CT.res %>% select(CortLR) %>% apply(2, scale, scale = TRUE) %>%
+  cbind(CT.res[c("Sex", "Age", "Subject")]) 
 
 CTres_age_ls <-CT.resZ %>% select(contains("age.resid")) %>% names
 CTres_full_ls <-CT.resZ %>% select(contains("Full.resid")) %>% names
@@ -924,6 +931,8 @@ for (i in 1:length(CortLR)) {
 #norm
 SA.resZ <- SA.res %>% select(contains(".resid")) %>% apply(2, scale, scale = TRUE) %>%
   cbind(SA.res[c("Sex", "Age", "Subject")]) 
+SA.Z <- SA.res %>% select(CortLR) %>% apply(2, scale, scale = TRUE) %>%
+  cbind(SA.res[c("Sex", "Age", "Subject")]) 
 
 SAres_age_ls <-SA.resZ %>% select(contains("age.resid")) %>% names
 SAres_full_ls <-SA.resZ %>% select(contains("Full.resid")) %>% names
@@ -1120,7 +1129,14 @@ All.resAgeIN <- merge(Vol.resZ, SC.resZ, by="Subject") %>% merge(CT.resZ, by.x="
 AllresAgeIN.file <- paste(outdir, "AllresAgeIN.csv", sep="/")
 write.csv(All.resAgeIN, file=AllresAgeIN.file, row.names = T)
 
+colnames(CT.Z) <- paste0("CT_", colnames(CT.Z))
+colnames(SA.Z) <- paste0("SA_", colnames(SA.Z))
 
+All.Z <- merge(Vol.Z, SC.Z, by=c("Subject", "Sex", "Age")) %>% merge(CT.Z, by.x=c("Subject", "Sex", "Age"), by.y=c("CT_Subject", "CT_Sex", "CT_Age")) %>% 
+  merge(SA.Z, by.x=c("Subject", "Sex", "Age"), by.y=c("SA_Subject", "SA_Sex", "SA_Age"))
+
+AllZ.file <- paste(outdir, "AllZ.csv", sep="/")
+write.csv(All.Z, file=AllZ.file, row.names = T)
 
 ```
 

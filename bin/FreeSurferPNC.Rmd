@@ -320,6 +320,9 @@ for (i in 1:length(overall)) {
 Vol.resZ <- Vol.res %>% select(contains(".resid")) %>% apply(2, scale, scale = TRUE) %>%
   cbind(Vol.res[c("Sex", "age_at_cnb", "ID")]) %>% merge(TBVageres.df[c("ID", ".residZ")], by= "ID") 
 
+Vol.Z <- Vol.res %>% select(overall) %>% apply(2, scale, scale = TRUE) %>%
+  cbind(Vol.res[c("Sex", "age_at_cnb", "ID")]) 
+
 OVres_age_ls <-Vol.resZ %>% dplyr::select(contains("age.resid")) %>% names
 OVres_full_ls <-Vol.resZ %>% dplyr::select(contains("Full.resid")) %>% names
 
@@ -477,6 +480,8 @@ for (i in 1:length(SubCortLR)) {
 #norm
 SC.resZ <- SC.res %>% select(contains(".resid")) %>% apply(2, scale, scale = TRUE) %>%
   cbind(SC.res[c("Sex", "age_at_cnb", "ID")]) 
+SC.Z <- SC.res %>% select(SubCortLR) %>% apply(2, scale, scale = TRUE) %>%
+  cbind(SC.res[c("Sex", "age_at_cnb", "Subject")]) 
 
 SCres_age_ls <-SC.resZ %>% dplyr::select(contains("age.resid")) %>% names
 SCres_full_ls <-SC.resZ %>% dplyr::select(contains("Full.resid")) %>% names
@@ -714,6 +719,8 @@ for (i in 1:length(CortLR)) {
 #norm
 CT.resZ <- CT.res %>% select(contains(".resid")) %>% apply(2, scale, scale = TRUE) %>%
   cbind(CT.res[c("Sex", "age_at_cnb", "ID")]) 
+CT.Z <- CT.res %>% select(CortLR) %>% apply(2, scale, scale = TRUE) %>%
+  cbind(CT.res[c("Sex", "age_at_cnb", "ID")]) 
 
 CTres_age_ls <-CT.resZ %>% dplyr::select(contains("age.resid")) %>% names
 CTres_full_ls <-CT.resZ %>% dplyr::select(contains("Full.resid")) %>% names
@@ -928,6 +935,8 @@ for (i in 1:length(CortLR)) {
 #norm
 SA.resZ <- SA.res %>% select(contains(".resid")) %>% apply(2, scale, scale = TRUE) %>%
   cbind(SA.res[c("Sex", "age_at_cnb", "ID")]) 
+SA.Z <- SA.res %>% select(CortLR) %>% apply(2, scale, scale = TRUE) %>%
+  cbind(SA.res[c("Sex", "age_at_cnb", "ID")]) 
 
 SAres_age_ls <-SA.resZ %>% dplyr::select(contains("age.resid")) %>% names
 SAres_full_ls <-SA.resZ %>% dplyr::select(contains("Full.resid")) %>% names
@@ -1124,7 +1133,14 @@ All.resAgeIN <- merge(Vol.resZ, SC.resZ, by="ID") %>% merge(CT.resZ, by.x="ID", 
 AllresAgeIN.file <- paste(outdir, "AllresAgeIN.csv", sep="/")
 write.csv(All.resAgeIN, file=AllresAgeIN.file, row.names = T)
 
+colnames(CT.Z) <- paste0("CT_", colnames(CT.Z))
+colnames(SA.Z) <- paste0("SA_", colnames(SA.Z))
 
+All.Z <- merge(Vol.Z, SC.Z, by=c("ID", "Sex", "age_at_cnb")) %>% merge(CT.Z, by.x=c("ID", "Sex", "age_at_cnb"), by.y=c("CT_ID", "CT_Sex", "CT_age_at_cnb")) %>% 
+  merge(SA.Z, by.x=c("ID", "Sex", "age_at_cnb"), by.y=c("SA_ID", "SA_Sex", "SA_age_at_cnb"))
+
+AllZ.file <- paste(outdir, "AllZ.csv", sep="/")
+write.csv(All.Z, file=AllZ.file, row.names = T)
 
 ```
 # prepare graphs to combine with HCP graphs 

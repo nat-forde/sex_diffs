@@ -122,7 +122,7 @@ plot_vio <- function(ROIs, df) {
   a <- lapply(ROIs, function(f) ggplot(df, aes(x="Sex", fill= Sex)) + geom_split_violin(aes_string(y=f)) 
               + theme(axis.title.x = element_blank(), axis.text.x = element_blank(), axis.text.y=element_text(size=8),
                       axis.title=element_text(size=10), legend.position="none")
-              +stat_summary(aes_string(y=f), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+              +stat_summary(aes_string(y=f), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, fatten =10,
                             size=0.5, position = position_dodge(width = .75)))
   return(a)
 } #
@@ -145,7 +145,7 @@ plot_box_hemi <- function(ROIs, df) {
 plot_vio_hemi <- function(ROIs, df) {
   a <- lapply(ROIs, function(f) ggplot(df, aes(x=hemi, fill = Sex)) + geom_split_violin(aes_string(y=f)) 
               + theme(axis.title.x = element_blank(), axis.text=element_text(size=8), axis.title=element_text(size=10), legend.position="none") 
-              +stat_summary(aes_string(y=f), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, size=0.5, 
+              +stat_summary(aes_string(y=f), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, fatten=10, size=0.5, 
                             position = position_dodge(width = .75)))
   return(a)
 } #
@@ -391,6 +391,7 @@ write.csv(OV_VR, file=OVoutVR.file, row.names = T)
 ```
 # Overall Plots raw (for age plots) and minus age (box and vio)
 ```{r plots global}
+
 OVplots_age <- plot_age(overallincTBV, Vol.df)
 
 OV_to_graph_age <- c(".residZ", "TotalGrayage.resid", "CorticalWhiteMatterage.resid", "Cerebellum_Cortage.resid", "Cerebellum_WMage.resid") ########
@@ -481,7 +482,7 @@ for (i in 1:length(SubCortLR)) {
 SC.resZ <- SC.res %>% select(contains(".resid")) %>% apply(2, scale, scale = TRUE) %>%
   cbind(SC.res[c("Sex", "age_at_cnb", "ID")]) 
 SC.Z <- SC.res %>% select(SubCortLR) %>% apply(2, scale, scale = TRUE) %>%
-  cbind(SC.res[c("Sex", "age_at_cnb", "Subject")]) 
+  cbind(SC.res[c("Sex", "age_at_cnb", "ID")]) 
 
 SCres_age_ls <-SC.resZ %>% dplyr::select(contains("age.resid")) %>% names
 SCres_full_ls <-SC.resZ %>% dplyr::select(contains("Full.resid")) %>% names
@@ -1125,13 +1126,19 @@ All.res <- merge(Vol.resZ, SC.resZ, by="ID") %>% merge(CT.resZ, by.x="ID", by.y=
 Allres.file <- paste(outdir, "Allres.csv", sep="/")
 write.csv(All.res, file=Allres.file, row.names = T)
 
-
 All.resAgeIN <- merge(Vol.resZ, SC.resZ, by="ID") %>% merge(CT.resZ, by.x="ID", by.y="CT_ID") %>% 
   merge(SA.resZ, by.x="ID", by.y="SA_ID") %>% 
   select(contains("ageIn.resid")) %>% cbind(Vol.resZ[c("ID", "Sex", "age_at_cnb")]) 
 
 AllresAgeIN.file <- paste(outdir, "AllresAgeIN.csv", sep="/")
 write.csv(All.resAgeIN, file=AllresAgeIN.file, row.names = T)
+
+All.resAgeOUT <- merge(Vol.resZ, SC.resZ, by="ID") %>% merge(CT.resZ, by.x="ID", by.y="CT_ID") %>% 
+  merge(SA.resZ, by.x="ID", by.y="SA_ID") %>% 
+  select(contains("age.resid")) %>% cbind(Vol.resZ[c("ID", "Sex", "age_at_cnb")]) 
+
+AllresAgeOUT.file <- paste(outdir, "AllresAgeOUT.csv", sep="/")
+write.csv(All.resAgeOUT, file=AllresAgeOUT.file, row.names = T)
 
 colnames(CT.Z) <- paste0("CT_", colnames(CT.Z))
 colnames(SA.Z) <- paste0("SA_", colnames(SA.Z))
@@ -1148,47 +1155,47 @@ write.csv(All.Z, file=AllZ.file, row.names = T)
 ##SC
 PNC_SCraw <- ggseg(SCplot_sig.raw, atlas="aseg", mapping=aes(fill=as.numeric(AgeResid_Cohen)), colour="black", size=0.4) +
   scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=1)) + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
 PNC_SCcor <- ggseg(SCplot_sig.cor, atlas="aseg", mapping=aes(fill=as.numeric(FullResid_Cohen)), colour="black", size=0.4) +
   scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=1)) + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
 
 PNC_SCrawVR <- ggseg(SCplotVR_sig.raw, atlas="aseg", mapping=aes(fill=as.numeric(VR_Age_VR)), colour="black", size=0.4) +
     scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
 PNC_SCcorVR <- ggseg(SCplotVR_sig.cor, atlas="aseg", mapping=aes(fill=as.numeric(VR_Full_VR)), colour="black", size=0.4) +
   scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
 
 ##CT
-PNC_CTraw <- ggseg(CTplot_sig.raw, mapping=aes(fill=as.numeric(AgeResid_Cohen)), colour="black", size=0.4) +
+PNC_CTraw <- ggseg(CTplot_sig.raw, mapping=aes(fill=as.numeric(AgeResid_Cohen)), colour="black", size=0.4, position="stacked") +
   scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=1)) + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
-PNC_CTcor <- ggseg(CTplot_sig.cor, mapping=aes(fill=as.numeric(FullResid_Cohen)), colour="black", size=0.4) +
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
+PNC_CTcor <- ggseg(CTplot_sig.cor, mapping=aes(fill=as.numeric(FullResid_Cohen)), colour="black", size=0.4, position="stacked") +
   scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=1)) + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
 
-PNC_CTrawVR <- ggseg(CTplotVR_sig.raw, mapping=aes(fill=as.numeric(VR_Age_VR)), colour="black", size=0.4) +
+PNC_CTrawVR <- ggseg(CTplotVR_sig.raw, mapping=aes(fill=as.numeric(VR_Age_VR)), colour="black", size=0.4, position="stacked") +
   scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
-PNC_CTcorVR <- ggseg(CTplotVR_sig.cor, mapping=aes(fill=as.numeric(VR_Full_VR)), colour="black", size=0.4) +
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
+PNC_CTcorVR <- ggseg(CTplotVR_sig.cor, mapping=aes(fill=as.numeric(VR_Full_VR)), colour="black", size=0.4, position="stacked") +
   scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
 
 ##SA
-PNC_SAraw <- ggseg(SAplot_sig.raw, mapping=aes(fill=as.numeric(AgeResid_Cohen)), colour="black", size=0.4) +
+PNC_SAraw <- ggseg(SAplot_sig.raw, mapping=aes(fill=as.numeric(AgeResid_Cohen)), colour="black", size=0.4, position="stacked") +
   scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=0.5)) + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
-PNC_SAcor <- ggseg(SAplot_sig.cor, mapping=aes(fill=as.numeric(FullResid_Cohen)), colour="black", size=0.4) +
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
+PNC_SAcor <- ggseg(SAplot_sig.cor, mapping=aes(fill=as.numeric(FullResid_Cohen)), colour="black", size=0.4, position="stacked") +
   scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=0.5)) + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
 
-PNC_SArawVR <- ggseg(SAplotVR_sig.raw, mapping=aes(fill=as.numeric(VR_Age_VR)), colour="black", size=0.4) +
+PNC_SArawVR <- ggseg(SAplotVR_sig.raw, mapping=aes(fill=as.numeric(VR_Age_VR)), colour="black", size=0.4, position="stacked") +
   scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
-PNC_SAcorVR <- ggseg(SAplotVR_sig.cor, mapping=aes(fill=as.numeric(VR_Full_VR)), colour="black", size=0.4) +
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
+PNC_SAcorVR <- ggseg(SAplotVR_sig.cor, mapping=aes(fill=as.numeric(VR_Full_VR)), colour="black", size=0.4, position="stacked") +
   scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
 
 ## rename PNC OV & SC
 PNC_OVplots_vio <- OVplots_vio

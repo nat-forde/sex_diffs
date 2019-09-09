@@ -104,7 +104,7 @@ plot_vio <- function(ROIs, df) {
   a <- lapply(ROIs, function(f) ggplot(df, aes(x="Sex", fill= Sex)) + geom_split_violin(aes_string(y=f)) 
               + theme(axis.title.x = element_blank(), axis.text.x = element_blank(), axis.text.y=element_text(size=8),
                       axis.title=element_text(size=10), legend.position="none")
-              +stat_summary(aes_string(y=f), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+              +stat_summary(aes_string(y=f), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, fatten =10,
                             size=0.5, position = position_dodge(width = .75)))
   return(a)
 } #
@@ -127,7 +127,7 @@ plot_box_hemi <- function(ROIs, df) {
 plot_vio_hemi <- function(ROIs, df) {
   a <- lapply(ROIs, function(f) ggplot(df, aes(x=hemi, fill = Sex)) + geom_split_violin(aes_string(y=f)) 
               + theme(axis.title.x = element_blank(), axis.text=element_text(size=8), axis.title=element_text(size=10), legend.position="none") 
-              +stat_summary(aes_string(y=f), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, size=0.5, 
+              +stat_summary(aes_string(y=f), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, fatten =10, size=0.5, 
                             position = position_dodge(width = .75)))
   return(a)
 } #
@@ -1129,6 +1129,13 @@ All.resAgeIN <- merge(Vol.resZ, SC.resZ, by="Subject") %>% merge(CT.resZ, by.x="
 AllresAgeIN.file <- paste(outdir, "AllresAgeIN.csv", sep="/")
 write.csv(All.resAgeIN, file=AllresAgeIN.file, row.names = T)
 
+All.resAgeOUT <- merge(Vol.resZ, SC.resZ, by="Subject") %>% merge(CT.resZ, by.x="Subject", by.y="CT_Subject") %>% 
+  merge(SA.resZ, by.x="Subject", by.y="SA_Subject") %>% 
+  select(contains("age.resid")) %>% cbind(Vol.resZ[c("Subject", "Age", "Sex")]) 
+
+AllresAgeOUT.file <- paste(outdir, "AllresAgeOUT.csv", sep="/")
+write.csv(All.resAgeOUT, file=AllresAgeOUT.file, row.names = T)
+
 colnames(CT.Z) <- paste0("CT_", colnames(CT.Z))
 colnames(SA.Z) <- paste0("SA_", colnames(SA.Z))
 
@@ -1144,50 +1151,49 @@ write.csv(All.Z, file=AllZ.file, row.names = T)
 ```{r prep figures for combining}
 
 #plot required OASIS graphs without legends (the same is done for other data sets)
-##SC
 OASIS_SCraw <- ggseg(SCplot_sig.raw, atlas="aseg", mapping=aes(fill=as.numeric(AgeResid_Cohen)), colour="black", size=0.4) +
   scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=1)) + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
 OASIS_SCcor <- ggseg(SCplot_sig.cor, atlas="aseg", mapping=aes(fill=as.numeric(FullResid_Cohen)), colour="black", size=0.4) +
   scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=1)) + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
 
 OASIS_SCrawVR <- ggseg(SCplotVR_sig.raw, atlas="aseg", mapping=aes(fill=as.numeric(VR_Age_VR)), colour="black", size=0.4) +
     scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
-OASIS_SCcorVR <- ggseg(SCplotVR_sig.cor,atlas="aseg",  mapping=aes(fill=as.numeric(VR_Full_VR)), colour="black", size=0.4) +
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
+OASIS_SCcorVR <- ggseg(SCplotVR_sig.cor, atlas="aseg", mapping=aes(fill=as.numeric(VR_Full_VR)), colour="black", size=0.4) +
   scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
 
 ##CT
-OASIS_CTraw <- ggseg(CTplot_sig.raw, mapping=aes(fill=as.numeric(AgeResid_Cohen)), colour="black", size=0.4) +
+OASIS_CTraw <- ggseg(CTplot_sig.raw, mapping=aes(fill=as.numeric(AgeResid_Cohen)), colour="black", size=0.4, position="stacked") +
   scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=1)) + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
-OASIS_CTcor <- ggseg(CTplot_sig.cor, mapping=aes(fill=as.numeric(FullResid_Cohen)), colour="black", size=0.4) +
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
+OASIS_CTcor <- ggseg(CTplot_sig.cor, mapping=aes(fill=as.numeric(FullResid_Cohen)), colour="black", size=0.4, position="stacked") +
   scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=1)) + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
 
-OASIS_CTrawVR <- ggseg(CTplotVR_sig.raw, mapping=aes(fill=as.numeric(VR_Age_VR)), colour="black", size=0.4) +
-  scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5)) + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
-OASIS_CTcorVR <- ggseg(CTplotVR_sig.cor, mapping=aes(fill=as.numeric(VR_Full_VR)), colour="black", size=0.4) +
+OASIS_CTrawVR <- ggseg(CTplotVR_sig.raw, mapping=aes(fill=as.numeric(VR_Age_VR)), colour="black", size=0.4, position="stacked") +
   scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
+OASIS_CTcorVR <- ggseg(CTplotVR_sig.cor, mapping=aes(fill=as.numeric(VR_Full_VR)), colour="black", size=0.4, position="stacked") +
+  scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
 
 ##SA
-OASIS_SAraw <- ggseg(SAplot_sig.raw, mapping=aes(fill=as.numeric(AgeResid_Cohen)), colour="black", size=0.4) +
-  scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=1)) + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
-OASIS_SAcor <- ggseg(SAplot_sig.cor, mapping=aes(fill=as.numeric(FullResid_Cohen)), colour="black", size=0.4) +
-  scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=1)) + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
+OASIS_SAraw <- ggseg(SAplot_sig.raw, mapping=aes(fill=as.numeric(AgeResid_Cohen)), colour="black", size=0.4, position="stacked") +
+  scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=0.5)) + 
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
+OASIS_SAcor <- ggseg(SAplot_sig.cor, mapping=aes(fill=as.numeric(FullResid_Cohen)), colour="black", size=0.4, position="stacked") +
+  scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=0.5)) + 
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
 
-OASIS_SArawVR <- ggseg(SAplotVR_sig.raw, mapping=aes(fill=as.numeric(VR_Age_VR)), colour="black", size=0.4) +
+OASIS_SArawVR <- ggseg(SAplotVR_sig.raw, mapping=aes(fill=as.numeric(VR_Age_VR)), colour="black", size=0.4, position="stacked") +
   scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
-OASIS_SAcorVR <- ggseg(SAplotVR_sig.cor, mapping=aes(fill=as.numeric(VR_Full_VR)), colour="black", size=0.4) +
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
+OASIS_SAcorVR <- ggseg(SAplotVR_sig.cor, mapping=aes(fill=as.numeric(VR_Full_VR)), colour="black", size=0.4, position="stacked") +
   scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
   
 ## rename OASIS OV & SC
 OASIS_OVplots_vio <- OVplots_vio

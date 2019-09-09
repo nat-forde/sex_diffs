@@ -141,7 +141,7 @@ plot_vio <- function(ROIs, df) {
   a <- lapply(ROIs, function(f) ggplot(df, aes(x="Sex", fill= Sex)) + geom_split_violin(aes_string(y=f)) 
               + theme(axis.title.x = element_blank(), axis.text.x = element_blank(), axis.text.y=element_text(size=8),
                       axis.title=element_text(size=10), legend.position="none")
-              +stat_summary(aes_string(y=f), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
+              +stat_summary(aes_string(y=f), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, fatten = 10,
                             size=0.5, position = position_dodge(width = .75)))
   return(a)
 } #
@@ -164,7 +164,7 @@ plot_box_hemi <- function(ROIs, df) {
 plot_vio_hemi <- function(ROIs, df) {
   a <- lapply(ROIs, function(f) ggplot(df, aes(x=hemi, fill = Sex)) + geom_split_violin(aes_string(y=f)) 
               + theme(axis.title.x = element_blank(), axis.text=element_text(size=8), axis.title=element_text(size=10), legend.position="none") 
-              +stat_summary(aes_string(y=f), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, size=0.5, 
+              +stat_summary(aes_string(y=f), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, fatten= 10, size=0.5, 
                             position = position_dodge(width = .75)))
   return(a)
 } #
@@ -1175,6 +1175,13 @@ All.resAgeIN <- merge(Vol.resZ, SC.resZ, by="Subject") %>% merge(CT.resZ, by.x="
 AllresAgeIN.file <- paste(outdir, "AllresAgeIN.csv", sep="/")
 write.csv(All.resAgeIN, file=AllresAgeIN.file, row.names = T)
 
+All.resAgeOUT <- merge(Vol.resZ, SC.resZ, by="Subject") %>% merge(CT.resZ, by.x="Subject", by.y="CT_Subject") %>% 
+  merge(SA.resZ, by.x="Subject", by.y="SA_Subject") %>% 
+  select(contains("age.resid")) %>% cbind(Vol.resZ[c("Subject", "Age_in_Yrs", "Sex")]) 
+
+AllresAgeOUT.file <- paste(outdir, "AllresAgeOUT.csv", sep="/")
+write.csv(All.resAgeOUT, file=AllresAgeOUT.file, row.names = T)
+
 colnames(CT.Z) <- paste0("CT_", colnames(CT.Z))
 colnames(SA.Z) <- paste0("SA_", colnames(SA.Z))
 
@@ -1192,50 +1199,49 @@ write.csv(All.Z, file=AllZ.file, row.names = T)
 #plot required HCP graphs without legends (the same is done for PNC at the end of that script)
 
 ##SC
-HCP_SCraw <- ggseg(SCplot_sig.raw, atlas="aseg",mapping=aes(fill=as.numeric(AgeResid_Cohen)), colour="black", size=0.4) +
+HCP_SCraw <- ggseg(SCplot_sig.raw, atlas="aseg", mapping=aes(fill=as.numeric(AgeResid_Cohen)), colour="black", size=0.4) +
   scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=1)) + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
 HCP_SCcor <- ggseg(SCplot_sig.cor, atlas="aseg", mapping=aes(fill=as.numeric(FullResid_Cohen)), colour="black", size=0.4) +
   scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=1)) + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
 
 HCP_SCrawVR <- ggseg(SCplotVR_sig.raw, atlas="aseg", mapping=aes(fill=as.numeric(VR_Age_VR)), colour="black", size=0.4) +
     scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
 HCP_SCcorVR <- ggseg(SCplotVR_sig.cor, atlas="aseg", mapping=aes(fill=as.numeric(VR_Full_VR)), colour="black", size=0.4) +
   scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
 
 ##CT
-HCP_CTraw <- ggseg(CTplot_sig.raw, mapping=aes(fill=as.numeric(AgeResid_Cohen)), colour="black", size=0.4) +
+HCP_CTraw <- ggseg(CTplot_sig.raw, mapping=aes(fill=as.numeric(AgeResid_Cohen)), colour="black", size=0.4, position="stacked") +
   scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=1)) + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
-HCP_CTcor <- ggseg(CTplot_sig.cor, mapping=aes(fill=as.numeric(FullResid_Cohen)), colour="black", size=0.4) +
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
+HCP_CTcor <- ggseg(CTplot_sig.cor, mapping=aes(fill=as.numeric(FullResid_Cohen)), colour="black", size=0.4, position="stacked") +
   scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=1)) + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
 
-HCP_CTrawVR <- ggseg(CTplotVR_sig.raw, mapping=aes(fill=as.numeric(VR_Age_VR)), colour="black", size=0.4) +
-    scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
-HCP_CTcorVR <- ggseg(CTplotVR_sig.cor, mapping=aes(fill=as.numeric(VR_Full_VR)), colour="black", size=0.4) +
+HCP_CTrawVR <- ggseg(CTplotVR_sig.raw, mapping=aes(fill=as.numeric(VR_Age_VR)), colour="black", size=0.4, position="stacked") +
   scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
+HCP_CTcorVR <- ggseg(CTplotVR_sig.cor, mapping=aes(fill=as.numeric(VR_Full_VR)), colour="black", size=0.4, position="stacked") +
+  scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
 
 ##SA
-HCP_SAraw <- ggseg(SAplot_sig.raw, mapping=aes(fill=as.numeric(AgeResid_Cohen)), colour="black", size=0.4) +
-  scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=1)) + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
-HCP_SAcor <- ggseg(SAplot_sig.cor, mapping=aes(fill=as.numeric(FullResid_Cohen)), colour="black", size=0.4) +
-  scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=1)) + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
+HCP_SAraw <- ggseg(SAplot_sig.raw, mapping=aes(fill=as.numeric(AgeResid_Cohen)), colour="black", size=0.4, position="stacked") +
+  scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=0.5)) + 
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
+HCP_SAcor <- ggseg(SAplot_sig.cor, mapping=aes(fill=as.numeric(FullResid_Cohen)), colour="black", size=0.4, position="stacked") +
+  scale_fill_gradient2(low="#0033FF", mid="white", high="#FF3300", midpoint=0, limits=c(-1.4, 1.4), breaks=seq(-1,1,by=0.5)) + 
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
 
-HCP_SArawVR <- ggseg(SAplotVR_sig.raw, mapping=aes(fill=as.numeric(VR_Age_VR)), colour="black", size=0.4) +
-  scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5)) +
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
-HCP_SAcorVR <- ggseg(SAplotVR_sig.cor, mapping=aes(fill=as.numeric(VR_Full_VR)), colour="black", size=0.4) +
+HCP_SArawVR <- ggseg(SAplotVR_sig.raw, mapping=aes(fill=as.numeric(VR_Age_VR)), colour="black", size=0.4, position="stacked") +
   scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
-  theme(legend.position="none", axis.title.x = element_blank(), axis.text.x= element_blank())
-  
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
+HCP_SAcorVR <- ggseg(SAplotVR_sig.cor, mapping=aes(fill=as.numeric(VR_Full_VR)), colour="black", size=0.4, position="stacked") +
+  scale_fill_gradient2(low="#006600", mid="#FFFF99", high="#FF9900", midpoint=1.8, limits=c(1, 2.81), breaks=seq(1,2.81,by=0.5))  + 
+  theme(legend.position="none", axis.title = element_blank(), axis.text= element_blank(), line=element_blank())
 
 ## rename HCP OV & SC
 HCP_OVplots_vio <- OVplots_vio
@@ -1278,8 +1284,8 @@ Comb_SC_VR_plot <- plot_grid(PNC_SCrawVR, PNC_SCcorVR, HCP_SCrawVR, HCP_SCcorVR,
 # Comb_CT_VR_plot <- plot_grid(PNC_CTrawVR, HCP_CTrawVR,  OASIS_CTrawVR,  PNC_CTcorVR, HCP_CTcorVR,  OASIS_CTcorVR, align="hv", ncol = 3,
 #           labels=c('A', 'B', 'C', '','', ''), label_size=12)
 
-Comb_Cort_VR_plot <- plot_grid(PNC_SArawVR, HCP_SArawVR,  OASIS_SArawVR,  PNC_SAcorVR, HCP_SAcorVR,  OASIS_SAcorVR,
-                               PNC_CTrawVR, HCP_CTrawVR,  OASIS_CTrawVR,  PNC_CTcorVR, HCP_CTcorVR,  OASIS_CTcorVR, align="hv", ncol = 3)
+Comb_Cort_VR_plot <- plot_grid(PNC_SArawVR, PNC_SAcorVR, HCP_SArawVR,  HCP_SAcorVR, OASIS_SArawVR,  OASIS_SAcorVR,
+                               PNC_CTrawVR, PNC_CTcorVR, HCP_CTrawVR, HCP_CTcorVR, OASIS_CTrawVR, OASIS_CTcorVR, align="hv", ncol = 6)
 
 #name and save
 Comb_SC_VR_plot.file <- paste(outdir_combined, "Comb_VR_SCatlas.png", sep="/")
@@ -1289,7 +1295,7 @@ Comb_Cort_VR_plot.file <- paste(outdir_combined, "Comb_VR_CORTatlas.png", sep="/
 # ggsave(Comb_SA_VR_plot.file, Comb_SA_VR_plot, dpi=300, width = 21, height = 10, units = "cm")
 # ggsave(Comb_CT_VR_plot.file, Comb_CT_VR_plot, dpi=300, width = 21, height = 10, units = "cm")
 ggsave(Comb_SC_VR_plot.file, Comb_SC_VR_plot, dpi=300, width = 21, height = 10, units = "cm")
-ggsave(Comb_Cort_VR_plot.file, Comb_Cort_VR_plot, dpi=300, width = 21, height = 20, units = "cm")
+ggsave(Comb_Cort_VR_plot.file, Comb_Cort_VR_plot, dpi=600, width = 21, height = 18, units = "cm")
 
 ## mean only
 Comb_SC_x_plot <- plot_grid(PNC_SCraw, PNC_SCcor, HCP_SCraw,  HCP_SCcor, OASIS_SCraw, OASIS_SCcor, align="hv", ncol = 6)
@@ -1300,8 +1306,8 @@ Comb_SC_x_plot <- plot_grid(PNC_SCraw, PNC_SCcor, HCP_SCraw,  HCP_SCcor, OASIS_S
 # Comb_CT_x_plot <- plot_grid(PNC_CTraw, HCP_CTraw,  OASIS_CTraw,  PNC_CTcor, HCP_CTcor,  OASIS_CTcor, align="hv", ncol = 3,
 #           labels=c('A', 'B', 'C', '','', ''), label_size=12)
 
-Comb_Cort_x_plot <- plot_grid(PNC_SAraw, HCP_SAraw,  OASIS_SAraw,  PNC_SAcor, HCP_SAcor,  OASIS_SAcor,
-                              PNC_CTraw, HCP_CTraw,  OASIS_CTraw,  PNC_CTcor, HCP_CTcor,  OASIS_CTcor, align="hv", ncol = 3)
+Comb_Cort_x_plot <- plot_grid(PNC_SAraw, PNC_SAcor, HCP_SAraw, HCP_SAcor, OASIS_SAraw,  OASIS_SAcor,
+                              PNC_CTraw, PNC_CTcor, HCP_CTraw, HCP_CTcor, OASIS_CTraw, OASIS_CTcor, align="hv", ncol = 6)
 
 #name and save
 Comb_SC_x_plot.file <- paste(outdir_combined, "Comb_mean_SCatlas.png", sep="/")
@@ -1311,51 +1317,63 @@ Comb_Cort_x_plot.file <- paste(outdir_combined, "Comb_mean_CORTatlas.png", sep="
 # ggsave(Comb_SA_x_plot.file, Comb_SA_x_plot, dpi=300, width = 21, height = 10, units = "cm")
 # ggsave(Comb_CT_x_plot.file, Comb_CT_x_plot, dpi=300, width = 21, height = 10, units = "cm")
 ggsave(Comb_SC_x_plot.file, Comb_SC_x_plot, dpi=300, width = 21, height = 10, units = "cm")
-ggsave(Comb_Cort_x_plot.file, Comb_Cort_x_plot, dpi=300, width = 21, height = 20, units = "cm")
+ggsave(Comb_Cort_x_plot.file, Comb_Cort_x_plot, dpi=600, width = 21, height = 18, units = "cm")
 
 #global
-Comb_OV_Vio <- plot_grid((PNC_OVplots_vio[[1]] + ylab("Total Brain Volume") + ylim(-4,4) +
-                            theme(axis.ticks.x=element_blank())), NULL,
-                          (HCP_OVplots_vio[[1]] + ylab("Total Brain Volume") + ylim(-4,4) +
-                           theme(axis.ticks.x=element_blank())), NULL ,
-                          (OASIS_OVplots_vio[[1]] + ylab("Total Brain Volume") + ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())), NULL,
-          (PNC_OVplots_vio[[2]] +ylab("Cerebral Grey Matter") + ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())), (PNC_OVplots_vio.res[[2]] +ylab("")+ ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())),
-          (HCP_OVplots_vio[[2]] +ylab("Cerebral Grey Matter")+ ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())), (HCP_OVplots_vio.res[[2]] +ylab("")+ ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())),
-          (OASIS_OVplots_vio[[2]] +ylab("Cerebral Grey Matter")+ ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())), (OASIS_OVplots_vio.res[[2]] +ylab("")+ ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())),
-          (PNC_OVplots_vio[[3]] +ylab("Cerebral White Matter")+ ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())), (PNC_OVplots_vio.res[[3]] +ylab("")+ ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())),
-          (HCP_OVplots_vio[[3]] +ylab("Cerebral White Matter")+ ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())), (HCP_OVplots_vio.res[[3]] +ylab("")+ ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())),
-          (OASIS_OVplots_vio[[3]] +ylab("Cerebral White Matter")+ ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())), (OASIS_OVplots_vio.res[[3]] +ylab("")+ ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())),
-          (PNC_OVplots_vio[[4]] +ylab("Cerebellar Grey Matter")+ ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())), (PNC_OVplots_vio.res[[4]] +ylab("")+ ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())),
-          (HCP_OVplots_vio[[4]] +ylab("Cerebellar Grey Matter")+ ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())), (HCP_OVplots_vio.res[[4]] +ylab("")+ ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())),
-          (OASIS_OVplots_vio[[4]] +ylab("Cerebellar Grey Matter")+ ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())), (OASIS_OVplots_vio.res[[4]] +ylab("")+ ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())),
-          (PNC_OVplots_vio[[5]] +ylab("Cerebellar White Matter")+ ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())), (PNC_OVplots_vio.res[[5]] +ylab("")+ ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())),
-          (HCP_OVplots_vio[[5]] +ylab("Cerebellar White Matter")+ ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())), (HCP_OVplots_vio.res[[5]] +ylab("")+ ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())),
-          (OASIS_OVplots_vio[[5]] +ylab("Cerebellar White Matter")+ ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())), (OASIS_OVplots_vio.res[[5]] +ylab("")+ ylim(-4,4) +
-                             theme(axis.ticks.x=element_blank())),
+Comb_OV_Vio <- plot_grid((PNC_OVplots_vio[[1]] + ylab("TBV") + ylim(-4,4) +
+                            theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))), NULL,
+                          (HCP_OVplots_vio[[1]] + ylab("TBV") + ylim(-4,4) +
+                           theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))), NULL ,
+                          (OASIS_OVplots_vio[[1]] + ylab("TBV") + ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))), NULL,
+          (PNC_OVplots_vio[[2]] +ylab("Cerebral GM") + ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
+          (PNC_OVplots_vio.res[[2]] +ylab("")+ ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
+          (HCP_OVplots_vio[[2]] +ylab("Cerebral GM")+ ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
+          (HCP_OVplots_vio.res[[2]] +ylab("")+ ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
+          (OASIS_OVplots_vio[[2]] +ylab("Cerebral GM")+ ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
+          (OASIS_OVplots_vio.res[[2]] +ylab("")+ ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
+          (PNC_OVplots_vio[[3]] +ylab("Cerebral WM")+ ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
+          (PNC_OVplots_vio.res[[3]] +ylab("")+ ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
+          (HCP_OVplots_vio[[3]] +ylab("Cerebral WM")+ ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
+          (HCP_OVplots_vio.res[[3]] +ylab("")+ ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
+          (OASIS_OVplots_vio[[3]] +ylab("Cerebral WM")+ ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
+          (OASIS_OVplots_vio.res[[3]] +ylab("")+ ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
+          (PNC_OVplots_vio[[4]] +ylab("Cerebellar GM")+ ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
+          (PNC_OVplots_vio.res[[4]] +ylab("")+ ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
+          (HCP_OVplots_vio[[4]] +ylab("Cerebellar GM")+ ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
+          (HCP_OVplots_vio.res[[4]] +ylab("")+ ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
+          (OASIS_OVplots_vio[[4]] +ylab("Cerebellar GM")+ ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
+          (OASIS_OVplots_vio.res[[4]] +ylab("")+ ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
+          (PNC_OVplots_vio[[5]] +ylab("Cerebellar WM")+ ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
+          (PNC_OVplots_vio.res[[5]] +ylab("")+ ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
+          (HCP_OVplots_vio[[5]] +ylab("Cerebellar WM")+ ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
+          (HCP_OVplots_vio.res[[5]] +ylab("")+ ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
+          (OASIS_OVplots_vio[[5]] +ylab("Cerebellar WM")+ ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
+          (OASIS_OVplots_vio.res[[5]] +ylab("")+ ylim(-4,4) +
+                             theme(axis.ticks.x=element_blank(), axis.text = element_text(size=10), axis.title=element_text(size=14))),
           align="hv", ncol =6)#,
           # labels=c('A','','B','','','','','','','',''), label_size=12)
 

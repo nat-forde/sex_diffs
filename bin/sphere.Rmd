@@ -414,54 +414,76 @@ OASIS.unit.CT <- apply(dplyr::select(OASIS.norm, starts_with("CT")), 1, unit1) %
 ## graphing / testing
 ```{r testing}
 
-# # plot the best vector
-# 
-# #get example 3 variable unit vector
-# HCP.unit3 <- HCP.res[c(2:4)] %>% rowwise() %>% scalar1()
-# 
-  
-#   
-# 
-# x3.unit <- apply(HCP.norm[c(1:3)], 1, unit1) %>% t() %>% cbind(HCP.norm[c("sex.coded", "Age", "Subject", "Sex")])
-# yM <- filter(x3.unit, sex.coded==1) %>% select(c(1:3)) %>% colMeans() %>% unit1() 
-# yF <- filter(x3.unit, sex.coded==2) %>% select(c(1:3)) %>% colMeans() %>% unit1()
-# 
-# 
-# rgl.open()
-# 
-# #rgl.spheres()
-# #rgl.sphgrid()
-# rgl.points(x3.unit[c(1:3)], color=x3.unit$sex.coded)
-# rgl.bg(color="white")
-# 
-# rgl.points( 0.1244976, -0.2025884, 0.9713178,  color="blue", size=10) #mean
-# rgl.points(0.5732461, 0.5646552, 0.5937621,  color="red", size=10) #from cent
-# 
-# 
-# # rgl.lines(c(0,1), c(0, 0), c(0, 0), color = "black")
-# # rgl.lines(c(0, 0), c(0,1), c(0, 0), color = "red")
-# # rgl.lines(c(0, 0), c(0, 0), c(0,1), color = "green")
-# 
-# rgl.lines(c(min(x3.unit$Total_GMFull.resid), max(x3.unit$Total_GMFull.resid)), c(0, 0), c(0, 0), color = "black")
-# rgl.lines(c(0, 0), c(min(HCP.res$Cerebellum_CortFull.resid),max(x3.unit$Cerebellum_CortFull.resid)), c(0, 0), color = "red")
-# rgl.lines(c(0, 0), c(0, 0), c(min(x3.unit$Tot_WMFull.resid),max(x3.unit$Tot_WMFull.resid)), color = "green")
-# 
-# rgl.close()
-# 
-# x3.M <- subset(x3.unit, Sex =="Male")
-# x3.F <- subset(x3.unit, Sex =="Female")
-# 
-# x3.M$cos <- filter(x3.unit, sex.coded ==1) %>% select(1:3) %>% cos.dist()
-# x3.F$cos <- filter(x3.unit, sex.coded ==2) %>% select(1:3) %>% cos.dist()
-# x3.cos <- rbind(x3.M, x3.F)
-# 
-# ggplot(x3.cos, aes(x=Sex, fill= Sex, y=cos)) + geom_split_violin() +
-#               theme(axis.text.x = element_blank(), axis.text.y=element_text(size=8), axis.ticks.x=element_blank(),
-#                       axis.title.x=element_blank(), axis.title.y=element_text(size=10), legend.position="none") + 
-#                       ylab("Cosine Angle (deg)") + ylim(0,180) +
-#                       stat_summary(aes(y=cos), fun.data=mean_sdl, fun.args = list(mult = 1), geom="pointrange", shape =95, 
-#                             size=0.5, position = position_dodge(width = .75))
+# # plot a 3d eg 
 
+df <- HCP.norm[c("L_ThalamusProperFull.resid", "L_CaudateFull.resid", "L_HippoFull.resid", "Age", "Sex")]
+df$sex.coded <- NA
+####### synthetic data
+kappa <- 30
+
+alpha=1
+mu <-c(0.3337897, 0.7605786, 0.5568703)
+theta <- kappa * mu
+set.seed(123)
+x <- rmovMF(100, theta, alpha)
+
+library(sphereplot)
+rgl.sphgrid(radius = 1, col.long='grey', col.lat='light grey', deggap = 15, 
+add = FALSE, radaxis=FALSE, radlab= NULL, longtype = NULL)
+
+rgl.points(x, color="red", alpha=0.4, size=7)
+
+rgl.points(t(mu),  color="black", size=12) 
+rgl.points(0, 0, 0,  color="grey", size=10) 
+rgl.points(t(x[11,]),  color="red", size=8) 
+
+rgl.lines(c(0,mu[1]), c(0, mu[2]), c(0, mu[3]), color = "black", lwd = 2)
+rgl.lines(c(0, x[11,1]), c(0,x[11,2]), c(0, x[11,3]), color = "black", lwd = 2)
+
+#rgl.snapshot(paste0(outdir, "/sphere_graphic.png"))
+
+rgl.close()
+
+##### make mahalanobis dist figure
+
+MD1 <- HCP.norm %>% dplyr::select("L_ThalamusProperFull.resid", "R_ThalamusProperFull.resid", "L_HippoFull.resid") %>% .[1:102,] %>% filter(L_HippoFull.resid > -4)
+rgl.points(MD1, color="red", alpha=0.4, size=7)
+rgl.bg(color="white")
+rgl.lines(c(-4,4), c(-4, -4), c(0, 0), color = "gray", lwd=2)
+rgl.lines(c(-4,-4), c(-4, 4), c(0, 0), color = "gray", lwd=2)
+rgl.lines(c(-4,4), c(0, 0), c(-4, -4), color = "gray", lwd=2)
+rgl.lines(c(0,0), c(4, -4), c(-4, -4), color = "gray", lwd=2)
+rgl.lines(c(0,0), c(-4, -4), c(-4, 4), color = "gray", lwd=2)
+rgl.lines(c(-4,-4), c(0, 0), c(-4, 4), color = "gray", lwd=2)
+
+view3d(theta = 30, phi = 15, zoom= 1.5)
+grid3d(c("x", "y", "z"), col = "gray", lwd = 0.3, lty = 1, n = 10)
+grid3d(c("x", "y", "z"), col = "gray", lwd = 0.5, lty = 1, n = 5)
+grid3d(c("x", "y", "z"), col = "gray", lwd = 1, lty = 1, n = 1)
+rgl.snapshot(paste0(outdir, "/MDorig.png"))
+
+set.seed(123)
+MD2 <- cbind(rnorm(100,mean=0), rnorm(100,mean=0), rnorm(100,mean=0)) 
+
+
+rgl.points(MD2, color="red", alpha=0.4, size=7)
+rgl.bg(color="white")
+rgl.lines(c(-4,4), c(-4, -4), c(0, 0), color = "gray", lwd=2)
+rgl.lines(c(-4,-4), c(-4, 4), c(0, 0), color = "gray", lwd=2)
+rgl.lines(c(-4,4), c(0, 0), c(-4, -4), color = "gray", lwd=2)
+rgl.lines(c(0,0), c(4, -4), c(-4, -4), color = "gray", lwd=2)
+rgl.lines(c(0,0), c(-4, -4), c(-4, 4), color = "gray", lwd=2)
+rgl.lines(c(-4,-4), c(0, 0), c(-4, 4), color = "gray", lwd=2)
+
+
+rgl.points(0,0,0 , color="black", size=10)
+rgl.lines(c(0, MD2[11,1]), c(0,MD2[11,2]), c(0, MD2[11,3]), color = "black", lwd = 2)
+rgl.points(t(MD2[11,]),  color="red", size=8) 
+view3d(theta = 30, phi = 15, zoom=1.5)
+grid3d(c("x", "y", "z"), col = "gray", lwd = 0.3, lty = 1, n = 10)
+grid3d(c("x", "y", "z"), col = "gray", lwd = 0.5, lty = 1, n = 5)
+grid3d(c("x", "y", "z"), col = "gray", lwd = 1, lty = 1, n = 1)
+rgl.snapshot(paste0(outdir, "/MDwhitened.png"))
 
 ```
 #functions for calculating multi-dimensional centroids properly
@@ -572,9 +594,7 @@ OASIS.unit.CT <- apply(dplyr::select(OASIS.norm, starts_with("CT")), 1, unit1) %
 #     exp_p[-1] = np.cos(r)
 #     
 #     return exp_p
-    
-    
-    
+  
 ############ translation of Jerry's code ############### #    
 compute_reverse_givens <- function(a) {  #a is 2d vector
     

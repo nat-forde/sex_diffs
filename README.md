@@ -17,15 +17,15 @@ ADNI (only used briefly)
 Univariate analysis of sex differences in variance between individual ROIs from the DK atlas across multiple datasets  
 
 Scripts:  
-* FreeSurfer.Rmd (HCP)  
-* FreeSurfer_PNC.Rmd  
-* FreeSurfer_OASIS.Rmd  
+* __FreeSurfer.Rmd__ (HCP)  
+* __FreeSurfer_PNC.Rmd__  
+* __FreeSurfer_OASIS.Rmd__  
 * FreeSurfer_ADNI.Rmd (no longer using)  
   
 For matched data:  
-* __FS_PNC_matched.Rmd__  
-* __FS_HCP_matched.Rmd__  
-* __FS_OASIS_matched.Rmd__  
+* FS_PNC_matched.Rmd  
+* FS_HCP_matched.Rmd  
+* FS_OASIS_matched.Rmd  
   
 ## Mahalanobis Distance  
 Multivariate analysis of sex differencecs in variance across sets of ROIs (grouped by metric type)  

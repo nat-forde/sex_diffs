@@ -457,20 +457,20 @@ Global.cosu10m <- filter(PNC.unit.global, Sex=="M", Age <10) %>%
   cos.dist() %>% cbind("M", "<10")
 Global.cos1015m <- filter(PNC.unit.global, Sex=="M", Age >=10, Age <15) %>%
   dplyr::select(PNC.glo) %>%
-  cos.dist() %>% cbind("M", "10-15")
+  cos.dist() %>% cbind("M", "10-14")
 Global.cos1520m <- filter(PNC.unit.global, Sex=="M", Age >=15, Age <20) %>%
   dplyr::select(PNC.glo) %>%
-  cos.dist() %>% cbind("M", "15-20")
+  cos.dist() %>% cbind("M", "15-19")
 
 Global.cosu10f <- filter(PNC.unit.global, Sex=="F", Age <10) %>%
   dplyr::select(PNC.glo) %>%
   cos.dist() %>% cbind("F", "<10")
 Global.cos1015f <- filter(PNC.unit.global, Sex=="F", Age >=10, Age <15) %>%
   dplyr::select(PNC.glo) %>%
-  cos.dist() %>% cbind("F", "10-15")
+  cos.dist() %>% cbind("F", "10-14")
 Global.cos1520f <- filter(PNC.unit.global, Sex=="F", Age >=15, Age <20) %>%
   dplyr::select(PNC.glo) %>%
-  cos.dist() %>% cbind("F", "15-20")
+  cos.dist() %>% cbind("F", "15-19")
 
 #HCP
 Global.cosu25m <- filter(HCP.unit.global, Sex=="Male", Age <25) %>%
@@ -478,20 +478,20 @@ Global.cosu25m <- filter(HCP.unit.global, Sex=="Male", Age <25) %>%
   cos.dist() %>% cbind("M", "<25")
 Global.cos2530m <- filter(HCP.unit.global, Sex=="Male", Age >=25, Age <30) %>%
   dplyr::select(HCP.glo) %>%
-  cos.dist() %>% cbind("M", "25-30")
+  cos.dist() %>% cbind("M", "25-39")
 Global.cos3035m <- filter(HCP.unit.global, Sex=="Male", Age >=30, Age <35) %>%
   dplyr::select(HCP.glo) %>%
-  cos.dist() %>% cbind("M", "30-35")
+  cos.dist() %>% cbind("M", "30-34")
 
 Global.cosu25f <- filter(HCP.unit.global, Sex=="Female", Age <25) %>%
   dplyr::select(HCP.glo) %>%
   cos.dist() %>% cbind("F", "<25")
 Global.cos2530f <- filter(HCP.unit.global, Sex=="Female", Age >=25, Age <30) %>%
   dplyr::select(HCP.glo) %>%
-  cos.dist() %>% cbind("F", "25-30")
+  cos.dist() %>% cbind("F", "25-39")
 Global.cos3035f <- filter(HCP.unit.global, Sex=="Female", Age >=30, Age <35) %>%
   dplyr::select(HCP.glo) %>%
-  cos.dist() %>% cbind("F", "30-35")
+  cos.dist() %>% cbind("F", "30-34")
 
 #OASIS
 # Global.cos5055m <- filter(OASIS.unit.global, Sex=="M", Age >=50, Age <55) %>%
@@ -499,38 +499,38 @@ Global.cos3035f <- filter(HCP.unit.global, Sex=="Female", Age >=30, Age <35) %>%
 #   cos.dist() %>% cbind("M", "50-55")
 Global.cos5560m <- filter(OASIS.unit.global, Sex=="M", Age >=55, Age <60) %>%
   dplyr::select(OASIS.glo) %>%
-  cos.dist() %>% cbind("M", "55-60")
+  cos.dist() %>% cbind("M", "55-59")
 Global.cos6065m <- filter(OASIS.unit.global, Sex=="M", Age >=60, Age <65) %>%
   dplyr::select(OASIS.glo) %>%
-  cos.dist() %>% cbind("M", "60-65")
+  cos.dist() %>% cbind("M", "60-64")
 Global.cos6570m <- filter(OASIS.unit.global, Sex=="M", Age >=65, Age <70) %>%
   dplyr::select(OASIS.glo) %>%
-  cos.dist() %>% cbind("M", "65-70")
+  cos.dist() %>% cbind("M", "65-69")
 Global.cos7075m <- filter(OASIS.unit.global, Sex=="M", Age >=70, Age <75) %>%
   dplyr::select(OASIS.glo) %>%
-  cos.dist() %>% cbind("M", "70-75")
+  cos.dist() %>% cbind("M", "70-74")
 Global.cos7580m <- filter(OASIS.unit.global, Sex=="M", Age >=75, Age <80) %>%
   dplyr::select(OASIS.glo) %>%
-  cos.dist() %>% cbind("M", "75-80")
+  cos.dist() %>% cbind("M", "75-79")
 
 # Global.cos5055f <- filter(OASIS.unit.global, Sex=="F", Age >=50, Age <55) %>%
 #   dplyr::select(OASIS.glo) %>%
 #   cos.dist() %>% cbind("F", "50-55")
 Global.cos5560f <- filter(OASIS.unit.global, Sex=="F", Age >=55, Age <60) %>%
   dplyr::select(OASIS.glo) %>%
-  cos.dist() %>% cbind("F", "55-60")
+  cos.dist() %>% cbind("F", "55-59")
 Global.cos6065f <- filter(OASIS.unit.global, Sex=="F", Age >=60, Age <65) %>%
   dplyr::select(OASIS.glo) %>%
-  cos.dist() %>% cbind("F", "60-65")
+  cos.dist() %>% cbind("F", "60-64")
 Global.cos6570f <- filter(OASIS.unit.global, Sex=="F", Age >=65, Age <70) %>%
   dplyr::select(OASIS.glo) %>%
-  cos.dist() %>% cbind("F", "65-70")
+  cos.dist() %>% cbind("F", "65-69")
 Global.cos7075f <- filter(OASIS.unit.global, Sex=="F", Age >=70, Age <75) %>%
   dplyr::select(OASIS.glo) %>%
-  cos.dist() %>% cbind("F", "70-75")
+  cos.dist() %>% cbind("F", "70-74")
 Global.cos7580f <- filter(OASIS.unit.global, Sex=="F", Age >=75, Age <80) %>%
   dplyr::select(OASIS.glo) %>%
-  cos.dist() %>% cbind("F", "75-80")
+  cos.dist() %>% cbind("F", "75-79")
 
 PNC.Global.cos <- rbind(Global.cosu10m, Global.cos1015m, Global.cos1520m, Global.cosu10f, Global.cos1015f, Global.cos1520f) %>% as.data.frame(stringsAsFactors = F)
 HCP.Global.cos <- rbind(Global.cosu25m, Global.cos2530m, Global.cos3035m, Global.cosu25f, Global.cos2530f, Global.cos3035f) %>% as.data.frame(stringsAsFactors = F)
@@ -548,20 +548,20 @@ SC.cosu10m <- filter(PNC.unit.SC, Sex=="M", Age <10) %>%
   cos.dist() %>% cbind("M", "<10")
 SC.cos1015m <- filter(PNC.unit.SC, Sex=="M", Age >=10, Age <15) %>%
   dplyr::select(PNC.SC) %>%
-  cos.dist() %>% cbind("M", "10-15")
+  cos.dist() %>% cbind("M", "10-14")
 SC.cos1520m <- filter(PNC.unit.SC, Sex=="M", Age >=15, Age <20) %>%
   dplyr::select(PNC.SC) %>%
-  cos.dist() %>% cbind("M", "15-20")
+  cos.dist() %>% cbind("M", "15-19")
 
 SC.cosu10f <- filter(PNC.unit.SC, Sex=="F", Age <10) %>%
   dplyr::select(PNC.SC) %>%
   cos.dist() %>% cbind("F", "<10")
 SC.cos1015f <- filter(PNC.unit.SC, Sex=="F", Age >=10, Age <15) %>%
   dplyr::select(PNC.SC) %>%
-  cos.dist() %>% cbind("F", "10-15")
+  cos.dist() %>% cbind("F", "10-14")
 SC.cos1520f <- filter(PNC.unit.SC, Sex=="F", Age >=15, Age <20) %>%
   dplyr::select(PNC.SC) %>%
-  cos.dist() %>% cbind("F", "15-20")
+  cos.dist() %>% cbind("F", "15-19")
 
 #HCP
 SC.cosu25m <- filter(HCP.unit.SC, Sex=="Male", Age <25) %>%
@@ -569,20 +569,20 @@ SC.cosu25m <- filter(HCP.unit.SC, Sex=="Male", Age <25) %>%
   cos.dist() %>% cbind("M", "<25")
 SC.cos2530m <- filter(HCP.unit.SC, Sex=="Male", Age >=25, Age <30) %>%
   dplyr::select(HCP.SC) %>%
-  cos.dist() %>% cbind("M", "25-30")
+  cos.dist() %>% cbind("M", "25-39")
 SC.cos3035m <- filter(HCP.unit.SC, Sex=="Male", Age >=30, Age <35) %>%
   dplyr::select(HCP.SC) %>%
-  cos.dist() %>% cbind("M", "30-35")
+  cos.dist() %>% cbind("M", "30-34")
 
 SC.cosu25f <- filter(HCP.unit.SC, Sex=="Female", Age <25) %>%
   dplyr::select(HCP.SC) %>%
   cos.dist() %>% cbind("F", "<25")
 SC.cos2530f <- filter(HCP.unit.SC, Sex=="Female", Age >=25, Age <30) %>%
   dplyr::select(HCP.SC) %>%
-  cos.dist() %>% cbind("F", "25-30")
+  cos.dist() %>% cbind("F", "25-39")
 SC.cos3035f <- filter(HCP.unit.SC, Sex=="Female", Age >=30, Age <35) %>%
   dplyr::select(HCP.SC) %>%
-  cos.dist() %>% cbind("F", "30-35")
+  cos.dist() %>% cbind("F", "30-34")
 
 #OASIS
 # SC.cos5055m <- filter(OASIS.unit.SC, Sex=="M", Age >=50, Age <55) %>%
@@ -590,38 +590,38 @@ SC.cos3035f <- filter(HCP.unit.SC, Sex=="Female", Age >=30, Age <35) %>%
 #   cos.dist() %>% cbind("M", "50-55")
 SC.cos5560m <- filter(OASIS.unit.SC, Sex=="M", Age >=55, Age <60) %>%
   dplyr::select(OASIS.SC) %>%
-  cos.dist() %>% cbind("M", "55-60")
+  cos.dist() %>% cbind("M", "55-59")
 SC.cos6065m <- filter(OASIS.unit.SC, Sex=="M", Age >=60, Age <65) %>%
   dplyr::select(OASIS.SC) %>%
-  cos.dist() %>% cbind("M", "60-65")
+  cos.dist() %>% cbind("M", "60-64")
 SC.cos6570m <- filter(OASIS.unit.SC, Sex=="M", Age >=65, Age <70) %>%
   dplyr::select(OASIS.SC) %>%
-  cos.dist() %>% cbind("M", "65-70")
+  cos.dist() %>% cbind("M", "65-69")
 SC.cos7075m <- filter(OASIS.unit.SC, Sex=="M", Age >=70, Age <75) %>%
   dplyr::select(OASIS.SC) %>%
-  cos.dist() %>% cbind("M", "70-75")
+  cos.dist() %>% cbind("M", "70-74")
 SC.cos7580m <- filter(OASIS.unit.SC, Sex=="M", Age >=75, Age <80) %>%
   dplyr::select(OASIS.SC) %>%
-  cos.dist() %>% cbind("M", "75-80")
+  cos.dist() %>% cbind("M", "75-79")
 
 # SC.cos5055f <- filter(OASIS.unit.SC, Sex=="F", Age >=50, Age <55) %>%
 #   dplyr::select(OASIS.SC) %>%
 #   cos.dist() %>% cbind("F", "50-55")
 SC.cos5560f <- filter(OASIS.unit.SC, Sex=="F", Age >=55, Age <60) %>%
   dplyr::select(OASIS.SC) %>%
-  cos.dist() %>% cbind("F", "55-60")
+  cos.dist() %>% cbind("F", "55-59")
 SC.cos6065f <- filter(OASIS.unit.SC, Sex=="F", Age >=60, Age <65) %>%
   dplyr::select(OASIS.SC) %>%
-  cos.dist() %>% cbind("F", "60-65")
+  cos.dist() %>% cbind("F", "60-64")
 SC.cos6570f <- filter(OASIS.unit.SC, Sex=="F", Age >=65, Age <70) %>%
   dplyr::select(OASIS.SC) %>%
-  cos.dist() %>% cbind("F", "65-70")
+  cos.dist() %>% cbind("F", "65-69")
 SC.cos7075f <- filter(OASIS.unit.SC, Sex=="F", Age >=70, Age <75) %>%
   dplyr::select(OASIS.SC) %>%
-  cos.dist() %>% cbind("F", "70-75")
+  cos.dist() %>% cbind("F", "70-74")
 SC.cos7580f <- filter(OASIS.unit.SC, Sex=="F", Age >=75, Age <80) %>%
   dplyr::select(OASIS.SC) %>%
-  cos.dist() %>% cbind("F", "75-80")
+  cos.dist() %>% cbind("F", "75-79")
 
 PNC.SC.cos <- rbind(SC.cosu10m, SC.cos1015m, SC.cos1520m, SC.cosu10f, SC.cos1015f, SC.cos1520f) %>% as.data.frame(stringsAsFactors = F)
 HCP.SC.cos <- rbind(SC.cosu25m, SC.cos2530m, SC.cos3035m, SC.cosu25f, SC.cos2530f, SC.cos3035f) %>% as.data.frame(stringsAsFactors = F)
@@ -638,20 +638,20 @@ SA.cosu10m <- filter(PNC.unit.SA, Sex=="M", Age <10) %>%
   cos.dist() %>% cbind("M", "<10")
 SA.cos1015m <- filter(PNC.unit.SA, Sex=="M", Age >=10, Age <15) %>%
   dplyr::select(starts_with("SA")) %>%
-  cos.dist() %>% cbind("M", "10-15")
+  cos.dist() %>% cbind("M", "10-14")
 SA.cos1520m <- filter(PNC.unit.SA, Sex=="M", Age >=15, Age <20) %>%
   dplyr::select(starts_with("SA")) %>%
-  cos.dist() %>% cbind("M", "15-20")
+  cos.dist() %>% cbind("M", "15-19")
 
 SA.cosu10f <- filter(PNC.unit.SA, Sex=="F", Age <10) %>%
   dplyr::select(starts_with("SA")) %>%
   cos.dist() %>% cbind("F", "<10")
 SA.cos1015f <- filter(PNC.unit.SA, Sex=="F", Age >=10, Age <15) %>%
   dplyr::select(starts_with("SA")) %>%
-  cos.dist() %>% cbind("F", "10-15")
+  cos.dist() %>% cbind("F", "10-14")
 SA.cos1520f <- filter(PNC.unit.SA, Sex=="F", Age >=15, Age <20) %>%
   dplyr::select(starts_with("SA")) %>%
-  cos.dist() %>% cbind("F", "15-20")
+  cos.dist() %>% cbind("F", "15-19")
 
 #HCP
 SA.cosu25m <- filter(HCP.unit.SA, Sex=="Male", Age <25) %>%
@@ -659,20 +659,20 @@ SA.cosu25m <- filter(HCP.unit.SA, Sex=="Male", Age <25) %>%
   cos.dist() %>% cbind("M", "<25")
 SA.cos2530m <- filter(HCP.unit.SA, Sex=="Male", Age >=25, Age <30) %>%
   dplyr::select(starts_with("SA")) %>%
-  cos.dist() %>% cbind("M", "25-30")
+  cos.dist() %>% cbind("M", "25-39")
 SA.cos3035m <- filter(HCP.unit.SA, Sex=="Male", Age >=30, Age <35) %>%
   dplyr::select(starts_with("SA")) %>%
-  cos.dist() %>% cbind("M", "30-35")
+  cos.dist() %>% cbind("M", "30-34")
 
 SA.cosu25f <- filter(HCP.unit.SA, Sex=="Female", Age <25) %>%
   dplyr::select(starts_with("SA")) %>%
   cos.dist() %>% cbind("F", "<25")
 SA.cos2530f <- filter(HCP.unit.SA, Sex=="Female", Age >=25, Age <30) %>%
   dplyr::select(starts_with("SA")) %>%
-  cos.dist() %>% cbind("F", "25-30")
+  cos.dist() %>% cbind("F", "25-39")
 SA.cos3035f <- filter(HCP.unit.SA, Sex=="Female", Age >=30, Age <35) %>%
   dplyr::select(starts_with("SA")) %>%
-  cos.dist() %>% cbind("F", "30-35")
+  cos.dist() %>% cbind("F", "30-34")
 
 #OASIS
 # SA.cos5055m <- filter(OASIS.unit.SA, Sex=="M", Age >=50, Age <55) %>%
@@ -680,38 +680,38 @@ SA.cos3035f <- filter(HCP.unit.SA, Sex=="Female", Age >=30, Age <35) %>%
 #   cos.dist() %>% cbind("M", "50-55")
 SA.cos5560m <- filter(OASIS.unit.SA, Sex=="M", Age >=55, Age <60) %>%
   dplyr::select(starts_with("SA")) %>%
-  cos.dist() %>% cbind("M", "55-60")
+  cos.dist() %>% cbind("M", "55-59")
 SA.cos6065m <- filter(OASIS.unit.SA, Sex=="M", Age >=60, Age <65) %>%
   dplyr::select(starts_with("SA")) %>%
-  cos.dist() %>% cbind("M", "60-65")
+  cos.dist() %>% cbind("M", "60-64")
 SA.cos6570m <- filter(OASIS.unit.SA, Sex=="M", Age >=65, Age <70) %>%
   dplyr::select(starts_with("SA")) %>%
-  cos.dist() %>% cbind("M", "65-70")
+  cos.dist() %>% cbind("M", "65-69")
 SA.cos7075m <- filter(OASIS.unit.SA, Sex=="M", Age >=70, Age <75) %>%
   dplyr::select(starts_with("SA")) %>%
-  cos.dist() %>% cbind("M", "70-75")
+  cos.dist() %>% cbind("M", "70-74")
 SA.cos7580m <- filter(OASIS.unit.SA, Sex=="M", Age >=75, Age <80) %>%
   dplyr::select(starts_with("SA")) %>%
-  cos.dist() %>% cbind("M", "75-80")
+  cos.dist() %>% cbind("M", "75-79")
 
 # SA.cos5055f <- filter(OASIS.unit.SA, Sex=="F", Age >=50, Age <55) %>%
 #   dplyr::select(starts_with("SA")) %>%
 #   cos.dist() %>% cbind("F", "50-55")
 SA.cos5560f <- filter(OASIS.unit.SA, Sex=="F", Age >=55, Age <60) %>%
   dplyr::select(starts_with("SA")) %>%
-  cos.dist() %>% cbind("F", "55-60")
+  cos.dist() %>% cbind("F", "55-59")
 SA.cos6065f <- filter(OASIS.unit.SA, Sex=="F", Age >=60, Age <65) %>%
   dplyr::select(starts_with("SA")) %>%
-  cos.dist() %>% cbind("F", "60-65")
+  cos.dist() %>% cbind("F", "60-64")
 SA.cos6570f <- filter(OASIS.unit.SA, Sex=="F", Age >=65, Age <70) %>%
   dplyr::select(starts_with("SA")) %>%
-  cos.dist() %>% cbind("F", "65-70")
+  cos.dist() %>% cbind("F", "65-69")
 SA.cos7075f <- filter(OASIS.unit.SA, Sex=="F", Age >=70, Age <75) %>%
   dplyr::select(starts_with("SA")) %>%
-  cos.dist() %>% cbind("F", "70-75")
+  cos.dist() %>% cbind("F", "70-74")
 SA.cos7580f <- filter(OASIS.unit.SA, Sex=="F", Age >=75, Age <80) %>%
   dplyr::select(starts_with("SA")) %>%
-  cos.dist() %>% cbind("F", "75-80")
+  cos.dist() %>% cbind("F", "75-79")
 
 PNC.SA.cos <- rbind(SA.cosu10m, SA.cos1015m, SA.cos1520m, SA.cosu10f, SA.cos1015f, SA.cos1520f) %>% as.data.frame(stringsAsFactors = F)
 HCP.SA.cos <- rbind(SA.cosu25m, SA.cos2530m, SA.cos3035m, SA.cosu25f, SA.cos2530f, SA.cos3035f) %>% as.data.frame(stringsAsFactors = F)
@@ -729,20 +729,20 @@ CT.cosu10m <- filter(PNC.unit.CT, Sex=="M", Age <10) %>%
   cos.dist() %>% cbind("M", "<10")
 CT.cos1015m <- filter(PNC.unit.CT, Sex=="M", Age >=10, Age <15) %>%
   dplyr::select(starts_with("CT")) %>%
-  cos.dist() %>% cbind("M", "10-15")
+  cos.dist() %>% cbind("M", "10-14")
 CT.cos1520m <- filter(PNC.unit.CT, Sex=="M", Age >=15, Age <20) %>%
   dplyr::select(starts_with("CT")) %>%
-  cos.dist() %>% cbind("M", "15-20")
+  cos.dist() %>% cbind("M", "15-19")
 
 CT.cosu10f <- filter(PNC.unit.CT, Sex=="F", Age <10) %>%
   dplyr::select(starts_with("CT")) %>%
   cos.dist() %>% cbind("F", "<10")
 CT.cos1015f <- filter(PNC.unit.CT, Sex=="F", Age >=10, Age <15) %>%
   dplyr::select(starts_with("CT")) %>%
-  cos.dist() %>% cbind("F", "10-15")
+  cos.dist() %>% cbind("F", "10-14")
 CT.cos1520f <- filter(PNC.unit.CT, Sex=="F", Age >=15, Age <20) %>%
   dplyr::select(starts_with("CT")) %>%
-  cos.dist() %>% cbind("F", "15-20")
+  cos.dist() %>% cbind("F", "15-19")
 
 #HCP
 CT.cosu25m <- filter(HCP.unit.CT, Sex=="Male", Age <25) %>%
@@ -750,20 +750,20 @@ CT.cosu25m <- filter(HCP.unit.CT, Sex=="Male", Age <25) %>%
   cos.dist() %>% cbind("M", "<25")
 CT.cos2530m <- filter(HCP.unit.CT, Sex=="Male", Age >=25, Age <30) %>%
   dplyr::select(starts_with("CT")) %>%
-  cos.dist() %>% cbind("M", "25-30")
+  cos.dist() %>% cbind("M", "25-39")
 CT.cos3035m <- filter(HCP.unit.CT, Sex=="Male", Age >=30, Age <35) %>%
   dplyr::select(starts_with("CT")) %>%
-  cos.dist() %>% cbind("M", "30-35")
+  cos.dist() %>% cbind("M", "30-34")
 
 CT.cosu25f <- filter(HCP.unit.CT, Sex=="Female", Age <25) %>%
   dplyr::select(starts_with("CT")) %>%
   cos.dist() %>% cbind("F", "<25")
 CT.cos2530f <- filter(HCP.unit.CT, Sex=="Female", Age >=25, Age <30) %>%
   dplyr::select(starts_with("CT")) %>%
-  cos.dist() %>% cbind("F", "25-30")
+  cos.dist() %>% cbind("F", "25-39")
 CT.cos3035f <- filter(HCP.unit.CT, Sex=="Female", Age >=30, Age <35) %>%
   dplyr::select(starts_with("CT")) %>%
-  cos.dist() %>% cbind("F", "30-35")
+  cos.dist() %>% cbind("F", "30-34")
 
 #OASIS
 # CT.cos5055m <- filter(OASIS.unit.CT, Sex=="M", Age >=50, Age <55) %>%
@@ -771,38 +771,38 @@ CT.cos3035f <- filter(HCP.unit.CT, Sex=="Female", Age >=30, Age <35) %>%
 #   cos.dist() %>% cbind("M", "50-55")
 CT.cos5560m <- filter(OASIS.unit.CT, Sex=="M", Age >=55, Age <60) %>%
   dplyr::select(starts_with("CT")) %>%
-  cos.dist() %>% cbind("M", "55-60")
+  cos.dist() %>% cbind("M", "55-59")
 CT.cos6065m <- filter(OASIS.unit.CT, Sex=="M", Age >=60, Age <65) %>%
   dplyr::select(starts_with("CT")) %>%
-  cos.dist() %>% cbind("M", "60-65")
+  cos.dist() %>% cbind("M", "60-64")
 CT.cos6570m <- filter(OASIS.unit.CT, Sex=="M", Age >=65, Age <70) %>%
   dplyr::select(starts_with("CT")) %>%
-  cos.dist() %>% cbind("M", "65-70")
+  cos.dist() %>% cbind("M", "65-69")
 CT.cos7075m <- filter(OASIS.unit.CT, Sex=="M", Age >=70, Age <75) %>%
   dplyr::select(starts_with("CT")) %>%
-  cos.dist() %>% cbind("M", "70-75")
+  cos.dist() %>% cbind("M", "70-74")
 CT.cos7580m <- filter(OASIS.unit.CT, Sex=="M", Age >=75, Age <80) %>%
   dplyr::select(starts_with("CT")) %>%
-  cos.dist() %>% cbind("M", "75-80")
+  cos.dist() %>% cbind("M", "75-79")
 
 # CT.cos5055f <- filter(OASIS.unit.CT, Sex=="F", Age >=50, Age <55) %>%
 #   dplyr::select(starts_with("CT")) %>%
 #   cos.dist() %>% cbind("F", "50-55")
 CT.cos5560f <- filter(OASIS.unit.CT, Sex=="F", Age >=55, Age <60) %>%
   dplyr::select(starts_with("CT")) %>%
-  cos.dist() %>% cbind("F", "55-60")
+  cos.dist() %>% cbind("F", "55-59")
 CT.cos6065f <- filter(OASIS.unit.CT, Sex=="F", Age >=60, Age <65) %>%
   dplyr::select(starts_with("CT")) %>%
-  cos.dist() %>% cbind("F", "60-65")
+  cos.dist() %>% cbind("F", "60-64")
 CT.cos6570f <- filter(OASIS.unit.CT, Sex=="F", Age >=65, Age <70) %>%
   dplyr::select(starts_with("CT")) %>%
-  cos.dist() %>% cbind("F", "65-70")
+  cos.dist() %>% cbind("F", "65-69")
 CT.cos7075f <- filter(OASIS.unit.CT, Sex=="F", Age >=70, Age <75) %>%
   dplyr::select(starts_with("CT")) %>%
-  cos.dist() %>% cbind("F", "70-75")
+  cos.dist() %>% cbind("F", "70-74")
 CT.cos7580f <- filter(OASIS.unit.CT, Sex=="F", Age >=75, Age <80) %>%
   dplyr::select(starts_with("CT")) %>%
-  cos.dist() %>% cbind("F", "75-80")
+  cos.dist() %>% cbind("F", "75-79")
 
 PNC.CT.cos <- rbind(CT.cosu10m, CT.cos1015m, CT.cos1520m, CT.cosu10f, CT.cos1015f, CT.cos1520f) %>% as.data.frame(stringsAsFactors = F)
 HCP.CT.cos <- rbind(CT.cosu25m, CT.cos2530m, CT.cos3035m, CT.cosu25f, CT.cos2530f, CT.cos3035f) %>% as.data.frame(stringsAsFactors = F)
